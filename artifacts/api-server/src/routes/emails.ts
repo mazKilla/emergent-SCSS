@@ -2,7 +2,7 @@ import { Router, type IRouter, type Request, type Response, type NextFunction } 
 import multer from "multer";
 import archiver from "archiver";
 import { db } from "@workspace/db";
-import { conversionJobsTable, convertedEmailsTable } from "@workspace/db";
+import { conversionJobsTable, convertedEmailsTable, emailAttachmentsTable } from "@workspace/db";
 import { eq, desc, count } from "drizzle-orm";
 import { parseEml, parseMbox } from "../lib/emailParser.js";
 
@@ -10,7 +10,7 @@ const router: IRouter = Router();
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 100 * 1024 * 1024 },
+  limits: { fileSize: 200 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     const ext = file.originalname.toLowerCase();
     if (ext.endsWith(".eml") || ext.endsWith(".mbox")) {
@@ -20,6 +20,10 @@ const upload = multer({
     }
   },
 });
+
+function safeZipPath(generatedFilename: string): string {
+  return generatedFilename.replace(/[:\\]/g, "_").replace(/\//g, "_");
+}
 
 async function processJob(jobId: number, buffer: Buffer, fileType: "eml" | "mbox") {
   try {
@@ -37,7 +41,8 @@ async function processJob(jobId: number, buffer: Buffer, fileType: "eml" | "mbox
 
     for (let i = 0; i < emails.length; i++) {
       const email = emails[i];
-      await db.insert(convertedEmailsTable).values({
+
+      const [savedEmail] = await db.insert(convertedEmailsTable).values({
         jobId,
         generatedFilename: email.generatedFilename,
         subject: email.subject,
@@ -48,7 +53,20 @@ async function processJob(jobId: number, buffer: Buffer, fileType: "eml" | "mbox
         hasAttachments: email.hasAttachments,
         attachmentCount: email.attachmentCount,
         attachmentNames: email.attachmentNames,
-      });
+      }).returning();
+
+      // Save actual attachment binary data as base64
+      if (email.attachments.length > 0) {
+        for (const att of email.attachments) {
+          await db.insert(emailAttachmentsTable).values({
+            emailId: savedEmail.id,
+            filename: att.filename,
+            contentType: att.contentType,
+            size: att.size,
+            dataBase64: att.data.toString("base64"),
+          });
+        }
+      }
 
       await db.update(conversionJobsTable)
         .set({ processedEmails: i + 1, updatedAt: new Date() })
@@ -220,10 +238,37 @@ router.get("/:id/download", async (req: Request, res: Response, next: NextFuncti
       return;
     }
 
-    const safeFilename = email.generatedFilename.replace(/[/:\\]/g, "_") + ".txt";
-    res.setHeader("Content-Type", "text/plain; charset=utf-8");
-    res.setHeader("Content-Disposition", `attachment; filename="${safeFilename}"`);
-    res.send(email.bodyText);
+    // If email has attachments, return a zip with email + attachments folder
+    const attachments = await db.select().from(emailAttachmentsTable)
+      .where(eq(emailAttachmentsTable.emailId, id));
+
+    if (attachments.length > 0) {
+      const folderName = safeZipPath(email.generatedFilename);
+      const zipFilename = `${folderName}.zip`;
+
+      res.setHeader("Content-Type", "application/zip");
+      res.setHeader("Content-Disposition", `attachment; filename="${zipFilename}"`);
+
+      const archive = archiver("zip", { zlib: { level: 9 } });
+      archive.pipe(res);
+
+      // Email text at root of folder
+      archive.append(email.bodyText, { name: `${folderName}/email.txt` });
+
+      // Attachments in subfolder
+      for (const att of attachments) {
+        const data = Buffer.from(att.dataBase64, "base64");
+        archive.append(data, { name: `${folderName}/attachments/${att.filename}` });
+      }
+
+      await archive.finalize();
+    } else {
+      // No attachments — just send the plain text file
+      const safeFilename = safeZipPath(email.generatedFilename) + ".txt";
+      res.setHeader("Content-Type", "text/plain; charset=utf-8");
+      res.setHeader("Content-Disposition", `attachment; filename="${safeFilename}"`);
+      res.send(email.bodyText);
+    }
   } catch (err) {
     next(err);
   }
@@ -243,7 +288,9 @@ router.get("/export/:jobId", async (req: Request, res: Response, next: NextFunct
       return;
     }
 
-    const emails = await db.select().from(convertedEmailsTable).where(eq(convertedEmailsTable.jobId, jobId));
+    const emails = await db.select().from(convertedEmailsTable)
+      .where(eq(convertedEmailsTable.jobId, jobId))
+      .orderBy(convertedEmailsTable.emailDate);
 
     const zipFilename = `${job.originalFilename.replace(/\.[^.]+$/, "")}_converted.zip`;
     res.setHeader("Content-Type", "application/zip");
@@ -253,8 +300,21 @@ router.get("/export/:jobId", async (req: Request, res: Response, next: NextFunct
     archive.pipe(res);
 
     for (const email of emails) {
-      const safeFilename = email.generatedFilename.replace(/[/:\\]/g, "_") + ".txt";
-      archive.append(email.bodyText, { name: safeFilename });
+      const folderName = safeZipPath(email.generatedFilename);
+
+      // Email text file inside its own subfolder
+      archive.append(email.bodyText, { name: `${folderName}/email.txt` });
+
+      // Fetch and add attachments into the subfolder's attachments/ directory
+      if (email.hasAttachments) {
+        const attachments = await db.select().from(emailAttachmentsTable)
+          .where(eq(emailAttachmentsTable.emailId, email.id));
+
+        for (const att of attachments) {
+          const data = Buffer.from(att.dataBase64, "base64");
+          archive.append(data, { name: `${folderName}/attachments/${att.filename}` });
+        }
+      }
     }
 
     await archive.finalize();

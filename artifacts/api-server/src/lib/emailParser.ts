@@ -1,5 +1,11 @@
 import { simpleParser, ParsedMail } from "mailparser";
-import { Readable } from "stream";
+
+export interface AttachmentData {
+  filename: string;
+  contentType: string;
+  size: number;
+  data: Buffer;
+}
 
 export interface ParsedEmail {
   subject: string;
@@ -11,6 +17,7 @@ export interface ParsedEmail {
   attachmentCount: number;
   attachmentNames: string | null;
   generatedFilename: string;
+  attachments: AttachmentData[];
 }
 
 function sanitizeForFilename(str: string): string {
@@ -39,7 +46,7 @@ function generateFilename(date: Date | null, sender: string, subject: string): s
   return `${datePart} - ${senderClean}_${subjectClean}`;
 }
 
-function extractBodyText(mail: ParsedMail): string {
+function extractBodyText(mail: ParsedMail, attachmentPaths: string[]): string {
   const parts: string[] = [];
 
   if (mail.subject) parts.push(`Subject: ${mail.subject}`);
@@ -70,11 +77,10 @@ function extractBodyText(mail: ParsedMail): string {
     parts.push("[No text body]");
   }
 
-  if (mail.attachments && mail.attachments.length > 0) {
+  if (attachmentPaths.length > 0) {
     parts.push("\n--- ATTACHMENTS ---");
-    for (const att of mail.attachments) {
-      const size = att.size ? `${Math.round(att.size / 1024)} KB` : "unknown size";
-      parts.push(`- ${att.filename || "unnamed"} (${att.contentType}, ${size})`);
+    for (const path of attachmentPaths) {
+      parts.push(`ATTACHMENT: ./attachments/${path}`);
     }
   }
 
@@ -122,12 +128,28 @@ function transformParsedMail(mail: ParsedMail): ParsedEmail {
     mail.bcc?.text,
   ].filter(Boolean).join("; ") || "Unknown";
   const emailDate = mail.date || null;
-  const bodyText = extractBodyText(mail);
-  const attachments = mail.attachments || [];
+
+  const rawAttachments = mail.attachments || [];
+  const attachments: AttachmentData[] = rawAttachments
+    .filter((a) => a.content && a.content.length > 0)
+    .map((a, i) => {
+      const rawName = a.filename || `attachment_${i + 1}`;
+      const safeFilename = sanitizeForFilename(rawName) || `attachment_${i + 1}`;
+      return {
+        filename: safeFilename,
+        contentType: a.contentType || "application/octet-stream",
+        size: a.size || a.content.length,
+        data: Buffer.isBuffer(a.content) ? a.content : Buffer.from(a.content),
+      };
+    });
+
+  const attachmentPaths = attachments.map((a) => a.filename);
+  const bodyText = extractBodyText(mail, attachmentPaths);
+
   const hasAttachments = attachments.length > 0;
   const attachmentCount = attachments.length;
   const attachmentNames = hasAttachments
-    ? attachments.map((a) => a.filename || "unnamed").join(", ")
+    ? attachments.map((a) => a.filename).join(", ")
     : null;
   const generatedFilename = generateFilename(emailDate, senderShort, subject);
 
@@ -141,5 +163,6 @@ function transformParsedMail(mail: ParsedMail): ParsedEmail {
     attachmentCount,
     attachmentNames,
     generatedFilename,
+    attachments,
   };
 }
