@@ -21,7 +21,8 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
 ```text
 artifacts-monorepo/
 ├── artifacts/              # Deployable applications
-│   └── api-server/         # Express API server
+│   ├── api-server/         # Express API server
+│   └── email-converter/    # Email converter React frontend
 ├── lib/                    # Shared libraries
 │   ├── api-spec/           # OpenAPI spec + Orval codegen config
 │   ├── api-client-react/   # Generated React Query hooks
@@ -34,6 +35,40 @@ artifacts-monorepo/
 ├── tsconfig.json           # Root TS project references
 └── package.json            # Root package with hoisted devDeps
 ```
+
+## Email Converter App
+
+A full-stack tool to convert `.eml` and `.mbox` files into clean, structured text for LLMs and embedding pipelines.
+
+### Features
+- Upload `.eml` or `.mbox` files (drag-and-drop or click)
+- Converts all emails including attachment metadata
+- Generated filenames follow format: `YYYY/DD/MM:HH:MM - sender_subject`
+- All conversions stored in PostgreSQL database
+- Download individual emails as `.txt` files
+- Export all emails from a job as a `.zip` archive
+- Dark high-contrast terminal/hacker aesthetic UI
+
+### Key Files
+- `artifacts/email-converter/` — React + Vite frontend (dark terminal UI)
+- `artifacts/api-server/src/routes/emails.ts` — Email upload, conversion, and download API
+- `artifacts/api-server/src/lib/emailParser.ts` — EML/MBOX parsing with `mailparser`
+- `lib/db/src/schema/emails.ts` — `conversion_jobs` and `converted_emails` DB tables
+- `lib/api-spec/openapi.yaml` — Full OpenAPI spec for all endpoints
+
+### API Endpoints
+- `POST /api/emails/upload` — Upload and convert a file (multipart/form-data)
+- `GET /api/emails/jobs` — List all conversion jobs
+- `GET /api/emails/jobs/:id` — Get job details + all converted emails
+- `DELETE /api/emails/jobs/:id` — Delete a job and its emails
+- `GET /api/emails/:id/download` — Download a single email as `.txt`
+- `GET /api/emails/export/:jobId` — Download all emails from a job as `.zip`
+
+### External Libraries
+- `mailparser` — Parses both `.eml` and `.mbox` formats (externalized in esbuild to avoid CJS bundling issues)
+- `archiver` — Creates zip archives for bulk export
+- `multer` — Handles multipart file upload
+- `react-dropzone` — Drag-and-drop file upload UI
 
 ## TypeScript & Composite Projects
 
@@ -59,8 +94,9 @@ Express 5 API server. Routes live in `src/routes/` and use `@workspace/api-zod` 
 - Routes: `src/routes/index.ts` mounts sub-routers; `src/routes/health.ts` exposes `GET /health` (full path: `/api/health`)
 - Depends on: `@workspace/db`, `@workspace/api-zod`
 - `pnpm --filter @workspace/api-server run dev` — run the dev server
-- `pnpm --filter @workspace/api-server run build` — production esbuild bundle (`dist/index.cjs`)
+- `pnpm --filter @workspace/api-server run build` — production esbuild bundle (`dist/index.mjs`)
 - Build bundles an allowlist of deps (express, cors, pg, drizzle-orm, zod, etc.) and externalizes the rest
+- **mailparser is externalized** in the esbuild config due to CJS internal requires
 
 ### `lib/db` (`@workspace/db`)
 
@@ -68,7 +104,7 @@ Database layer using Drizzle ORM with PostgreSQL. Exports a Drizzle client insta
 
 - `src/index.ts` — creates a `Pool` + Drizzle instance, exports schema
 - `src/schema/index.ts` — barrel re-export of all models
-- `src/schema/<modelname>.ts` — table definitions with `drizzle-zod` insert schemas (no models definitions exist right now)
+- `src/schema/emails.ts` — `conversion_jobs` and `converted_emails` tables
 - `drizzle.config.ts` — Drizzle Kit config (requires `DATABASE_URL`, automatically provided by Replit)
 - Exports: `.` (pool, db, schema), `./schema` (schema only)
 
@@ -85,11 +121,11 @@ Run codegen: `pnpm --filter @workspace/api-spec run codegen`
 
 ### `lib/api-zod` (`@workspace/api-zod`)
 
-Generated Zod schemas from the OpenAPI spec (e.g. `HealthCheckResponse`). Used by `api-server` for response validation.
+Generated Zod schemas from the OpenAPI spec. Used by `api-server` for response validation.
 
 ### `lib/api-client-react` (`@workspace/api-client-react`)
 
-Generated React Query hooks and fetch client from the OpenAPI spec (e.g. `useHealthCheck`, `healthCheck`).
+Generated React Query hooks and fetch client from the OpenAPI spec.
 
 ### `scripts` (`@workspace/scripts`)
 
