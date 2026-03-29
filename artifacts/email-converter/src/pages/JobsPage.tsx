@@ -1,17 +1,34 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Link } from 'wouter';
 import { format } from 'date-fns';
 import { FileCode, Trash2, Eye, RefreshCw, AlertTriangle, CheckCircle2, Clock } from 'lucide-react';
-import { useListJobs, useDeleteJob, getListJobsQueryKey } from '@workspace/api-client-react';
+import { useListJobs, useDeleteJob, getListJobsQueryKey, exportJob } from '@workspace/api-client-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Layout } from '@/components/Layout';
 import { UploadZone } from '@/components/UploadZone';
 import { TWindow, TButton, TBadge } from '@/components/TerminalUI';
 
+async function triggerAutoDownload(jobId: number, filename: string) {
+  try {
+    const blob = await exportJob(jobId);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${filename.replace(/\.[^.]+$/, '')}_converted_${format(new Date(), 'yyyyMMdd_HHmmss')}.zip`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  } catch {
+    // silently skip if download fails — user can still export manually
+  }
+}
+
 export default function JobsPage() {
   const queryClient = useQueryClient();
   const [page, setPage] = useState(0);
   const limit = 10;
+  const prevStatuses = useRef<Record<number, string>>({});
 
   // Poll more frequently if there are pending/processing jobs
   const { data, isLoading, isError, refetch, isFetching } = useListJobs(
@@ -26,6 +43,23 @@ export default function JobsPage() {
       }
     }
   );
+
+  // Auto-download zip when a job transitions to completed
+  useEffect(() => {
+    if (!data?.jobs) return;
+    for (const job of data.jobs) {
+      const prev = prevStatuses.current[job.id];
+      if (prev && prev !== 'completed' && job.status === 'completed' && job.totalEmails > 0) {
+        triggerAutoDownload(job.id, job.originalFilename);
+      }
+    }
+    // Update tracked statuses
+    const updated: Record<number, string> = {};
+    for (const job of data.jobs) {
+      updated[job.id] = job.status;
+    }
+    prevStatuses.current = updated;
+  }, [data?.jobs]);
 
   const deleteMutation = useDeleteJob({
     mutation: {

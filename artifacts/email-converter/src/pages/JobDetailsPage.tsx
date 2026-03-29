@@ -5,6 +5,7 @@ import { ArrowLeft, Download, FileArchive, Mail, Paperclip, Loader2, AlertCircle
 import { useGetJob, exportJob, downloadEmail } from '@workspace/api-client-react';
 import { Layout } from '@/components/Layout';
 import { TWindow, TButton, TBadge } from '@/components/TerminalUI';
+import { cn } from '@/lib/utils';
 
 export default function JobDetailsPage() {
   const [, params] = useRoute('/job/:id');
