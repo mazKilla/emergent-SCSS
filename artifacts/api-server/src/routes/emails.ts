@@ -252,8 +252,8 @@ router.get("/:id/download", async (req: Request, res: Response, next: NextFuncti
       const archive = archiver("zip", { zlib: { level: 9 } });
       archive.pipe(res);
 
-      // Email text file named after date+subject
-      archive.append(email.bodyText, { name: `${folderName}/${folderName}.txt` });
+      // Email text at root of folder
+      archive.append(email.bodyText, { name: `${folderName}/email.txt` });
 
       // Attachments in subfolder
       for (const att of attachments) {
@@ -302,8 +302,8 @@ router.get("/export/:jobId", async (req: Request, res: Response, next: NextFunct
     for (const email of emails) {
       const folderName = safeZipPath(email.generatedFilename);
 
-      // Email text file named after date+subject
-      archive.append(email.bodyText, { name: `${folderName}/${folderName}.txt` });
+      // Email text file inside its own subfolder
+      archive.append(email.bodyText, { name: `${folderName}/email.txt` });
 
       // Fetch and add attachments into the subfolder's attachments/ directory
       if (email.hasAttachments) {
