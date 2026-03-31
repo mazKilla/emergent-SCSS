@@ -16,12 +16,14 @@ load_dotenv()
 
 from emergentintegrations.llm.chat import LlmChat, UserMessage
 from openai import AsyncOpenAI
+import anthropic as _anthropic_sdk
 
 # ─── ENVIRONMENT ────────────────────────────────────────────────────
 MONGO_URL = os.environ.get("MONGO_URL")
 DB_NAME = os.environ.get("DB_NAME", "scss_advocate")
 EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY")
 XAI_API_KEY = os.environ.get("XAI_API_KEY")
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 
 # ─── MONGODB ────────────────────────────────────────────────────────
 mongo_client = MongoClient(MONGO_URL)
@@ -577,11 +579,11 @@ async def chat(req: ChatRequest):
     }
     messages_col.insert_one(user_msg_doc)
 
-    # Build extra context via web search
+# Build extra context via web search — ALL models always get internet access
     extra_context = ""
     search_results = []
-    if req.search_enabled and is_policy_query(req.message):
-        search_query = f"Alberta {req.message} ETW ALSS income support policy"
+    if req.search_enabled:
+        search_query = f"Alberta ETW ALSS {req.message}"
         search_results = web_search(search_query, max_results=4)
         extra_context = build_search_context(search_results)
 
