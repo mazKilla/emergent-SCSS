@@ -316,7 +316,7 @@ def get_session_messages(session_id: str) -> List[dict]:
     msgs = list(messages_col.find(
         {"session_id": session_id},
         sort=[("timestamp", 1)]
-    ))
+    ).limit(500))
     return msgs
 
 
@@ -414,7 +414,7 @@ async def get_models():
 
 @app.get("/api/sessions")
 async def list_sessions():
-    docs = list(sessions_col.find({}, sort=[("created_at", -1)]))
+    docs = list(sessions_col.find({}, sort=[("created_at", -1)]).limit(100))
     return {"sessions": serialize_doc(docs)}
 
 
@@ -563,7 +563,8 @@ async def list_emails(
         ]
 
     total = emails_col.count_documents(query)
-    docs = list(emails_col.find(query, sort=[("email_date", -1)]).skip(offset).limit(limit))
+    projection = {"subject": 1, "sender": 1, "recipients": 1, "email_date": 1, "case_id": 1, "tags": 1, "created_at": 1}
+    docs = list(emails_col.find(query, projection, sort=[("email_date", -1)]).skip(offset).limit(limit))
     return {"emails": serialize_doc(docs), "total": total}
 
 
