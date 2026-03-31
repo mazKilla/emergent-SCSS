@@ -1,0 +1,21 @@
+# Test Credentials
+
+## SCSS AB ADVOCATE
+
+No authentication required — app is open access.
+
+### AI Models
+- **Claude Sonnet 4.5**: Uses EMERGENT_LLM_KEY (sk-emergent-c2a8c8c88900a9fBc3) in backend/.env
+- **Grok 3 (xAI)**: Uses XAI_API_KEY (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) in backend/.env
+
+### Database
+- MongoDB: mongodb://localhost:27017 | DB: scss_advocate
+- Collections: chat_sessions, chat_messages, email_references
+
+### App URLs
+- Frontend: https://87dad054-b36d-41d3-a2e9-9ba89fa9b3c7.preview.emergentagent.com
+- Backend API: https://87dad054-b36d-41d3-a2e9-9ba89fa9b3c7.preview.emergentagent.com/api
+
+### Test Data
+- A test email "ETW Denial Notice - Test" may exist in MongoDB email_references collection from testing
+- Test sessions created during testing may exist in chat_sessions collection

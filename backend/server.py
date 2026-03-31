@@ -322,18 +322,24 @@ def get_session_messages(session_id: str) -> List[dict]:
 
 # ─── AI BACKENDS ──────────────────────────────────────────────────────
 async def call_claude(session_id: str, user_message: str, extra_context: str = "") -> str:
+    # Build history context as a prefix in the system message instead of re-sending
+    history = get_session_messages(session_id)
+    history_context = ""
+    if history:
+        recent = history[-20:]
+        history_lines = ["\n\n[CONVERSATION HISTORY]\n"]
+        for msg in recent:
+            role_label = "CLIENT" if msg["role"] == "user" else "SCSS AB ADVOCATE"
+            history_lines.append(f"{role_label}: {msg['content'][:500]}\n")
+        history_context = "\n".join(history_lines)
+
+    # Use unique per-request session to avoid LlmChat internal history conflicts
+    request_session_id = f"{session_id}-{len(history)}"
     chat = LlmChat(
         api_key=EMERGENT_LLM_KEY,
-        session_id=session_id,
-        system_message=ALBERTA_SYSTEM_PROMPT + extra_context,
+        session_id=request_session_id,
+        system_message=ALBERTA_SYSTEM_PROMPT + history_context + extra_context,
     ).with_model("anthropic", "claude-sonnet-4-5-20250929")
-
-    # Inject history from MongoDB
-    history = get_session_messages(session_id)
-    for msg in history[-20:]:  # last 20 messages
-        if msg["role"] == "user":
-            await chat.send_message(UserMessage(text=msg["content"]))
-        # AI messages are automatically tracked inside LlmChat session
 
     resp = await chat.send_message(UserMessage(text=user_message))
     return resp
