@@ -54,3 +54,8 @@ backend/.env
 frontend/.env
 *.env
 .env*
+
+# BUT always commit example templates
+!*.env.example
+!**/.env.example
+!.env.example
