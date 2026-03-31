@@ -4,6 +4,7 @@ import Sidebar from "./components/Sidebar";
 import ChatArea from "./components/ChatArea";
 import EmailPanel from "./components/EmailPanel";
 import EmailConverter from "./components/EmailConverter";
+import DebugPanel from "./components/DebugPanel";
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
@@ -16,6 +17,7 @@ export default function App() {
   const [showEmailPanel, setShowEmailPanel] = useState(false);
   const [emailCount, setEmailCount] = useState(0);
   const [activeTab, setActiveTab] = useState("chat"); // "chat" | "converter"
+  const [showDebug, setShowDebug] = useState(false);
 
   // Load sessions on mount
   const loadSessions = useCallback(async () => {
@@ -182,6 +184,7 @@ export default function App() {
         emailCount={emailCount}
         activeTab={activeTab}
         onTabChange={setActiveTab}
+        onOpenDebug={() => setShowDebug(true)}
       />
 
       <div className="flex flex-1 overflow-hidden">
@@ -217,9 +220,21 @@ export default function App() {
             )}
           </>
         ) : (
-          <EmailConverter />
+          <EmailConverter onSendToAdvocate={(content, subject) => {
+            setActiveTab("chat");
+            setTimeout(() => {
+              sendMessage(
+                `[SEND TO ADVOCATE — Email Analysis Request]\n\nSubject: ${subject}\n\n` +
+                `Please analyze this email correspondence for ETW/ALSS appeal relevance. ` +
+                `Identify any policy violations, missed obligations, rights implications, ` +
+                `and the strongest advocacy position for the recipient:\n\n---\n${content}`
+              );
+            }, 150);
+          }} />
         )}
       </div>
+
+      {showDebug && <DebugPanel onClose={() => setShowDebug(false)} />}
     </div>
   );
 }

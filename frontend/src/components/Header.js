@@ -1,10 +1,10 @@
 import React from "react";
-import { Bot, Mail, ChevronRight, MessageSquare, RefreshCw } from "lucide-react";
+import { Bot, Mail, ChevronRight, MessageSquare, RefreshCw, Activity } from "lucide-react";
 
 const CLAUDE_ID = "claude";
 const GROK_ID = "grok";
 
-export default function Header({ selectedModel, onModelChange, showEmailPanel, onToggleEmailPanel, emailCount, activeTab, onTabChange }) {
+export default function Header({ selectedModel, onModelChange, showEmailPanel, onToggleEmailPanel, emailCount, activeTab, onTabChange, onOpenDebug }) {
   return (
     <header
       data-testid="app-header"
@@ -92,6 +92,24 @@ export default function Header({ selectedModel, onModelChange, showEmailPanel, o
               <ChevronRight size={12} style={{ transform: showEmailPanel ? "rotate(180deg)" : "none", transition: "transform 0.2s" }} />
             </button>
           )}
+
+          {/* Debug Button */}
+          <button
+            data-testid="open-debug-panel"
+            onClick={onOpenDebug}
+            title="Debug & Health Check"
+            className="p-2 rounded transition-all"
+            style={{
+              background: "#08080C",
+              border: "1px solid rgba(255,255,255,0.1)",
+              color: "#A1A1AA",
+              cursor: "pointer",
+            }}
+            onMouseEnter={e => { e.currentTarget.style.borderColor = "rgba(0,255,212,0.4)"; e.currentTarget.style.color = "#00FFD4"; }}
+            onMouseLeave={e => { e.currentTarget.style.borderColor = "rgba(255,255,255,0.1)"; e.currentTarget.style.color = "#A1A1AA"; }}
+          >
+            <Activity size={14} />
+          </button>
         </div>
       </div>
 

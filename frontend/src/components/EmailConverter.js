@@ -2,7 +2,7 @@ import React, { useState, useCallback, useEffect, useRef } from "react";
 import {
   Upload, Loader2, AlertCircle, CheckCircle2, Clock, RefreshCw,
   AlertTriangle, FileCode, Eye, Trash2, ArrowLeft, Download,
-  FileArchive, Mail, Paperclip, User, Calendar, AlignLeft
+  FileArchive, Mail, Paperclip, User, Calendar, AlignLeft, Zap
 } from "lucide-react";
 
 const API = process.env.REACT_APP_BACKEND_URL;
@@ -410,7 +410,7 @@ function JobsTable({ onViewJob }) {
 
 
 // ── Job Detail View ───────────────────────────────────────────────────
-function JobDetail({ jobId, onBack }) {
+function JobDetail({ jobId, onBack, onSendToAdvocate }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState(null);
@@ -605,6 +605,21 @@ function JobDetail({ jobId, onBack }) {
                       }
                       TXT
                     </TBtn>
+                    {onSendToAdvocate && (
+                      <TBtn
+                        variant="accent"
+                        style={{ padding: "4px 10px", flexShrink: 0 }}
+                        testId={`send-to-advocate-${em.id}`}
+                        onClick={e => {
+                          e.stopPropagation();
+                          const content = `From: ${em.sender}\nTo: ${em.recipients || ""}\nDate: ${em.email_date ? new Date(em.email_date).toLocaleDateString("en-CA") : "N/A"}\n\n${em.body_text || ""}`;
+                          onSendToAdvocate(content, em.subject);
+                        }}
+                      >
+                        <Zap size={11} />
+                        ADVOCATE
+                      </TBtn>
+                    )}
                   </div>
 
                   {/* Expanded Detail */}
@@ -684,7 +699,7 @@ function triggerAutoDownload(jobId, filename) {
 
 
 // ── Main Email Converter Page ─────────────────────────────────────────
-export default function EmailConverter() {
+export default function EmailConverter({ onSendToAdvocate }) {
   const [view, setView] = useState("jobs"); // "jobs" | "detail"
   const [selectedJobId, setSelectedJobId] = useState(null);
   const [jobsKey, setJobsKey] = useState(0); // force re-fetch after upload
@@ -725,7 +740,11 @@ export default function EmailConverter() {
           <JobsTable key={jobsKey} onViewJob={handleViewJob} />
         </>
       ) : (
-        <JobDetail jobId={selectedJobId} onBack={() => setView("jobs")} />
+        <JobDetail
+          jobId={selectedJobId}
+          onBack={() => setView("jobs")}
+          onSendToAdvocate={onSendToAdvocate}
+        />
       )}
     </div>
   );

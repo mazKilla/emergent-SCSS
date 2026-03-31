@@ -388,6 +388,108 @@ async def health():
     return {"status": "ok", "service": "SCSS AB Advocate", "timestamp": utcnow().isoformat()}
 
 
+@app.get("/api/debug")
+async def debug_health():
+    """Comprehensive debug & health check for all subsystems."""
+    import platform, sys
+
+    checks = {}
+
+    # ── MongoDB ──
+    try:
+        mongo_client.admin.command("ping")
+        checks["mongodb"] = {
+            "status": "ok",
+            "collections": {
+                "chat_sessions": sessions_col.count_documents({}),
+                "chat_messages": messages_col.count_documents({}),
+                "email_references": emails_col.count_documents({}),
+                "ec_conversion_jobs": ec_jobs_col.count_documents({}),
+                "ec_converted_emails": ec_emails_col.count_documents({}),
+                "ec_email_attachments": ec_attachments_col.count_documents({}),
+            },
+        }
+    except Exception as e:
+        checks["mongodb"] = {"status": "error", "error": str(e)}
+
+    # ── Claude (Emergent LLM Key) ──
+    checks["claude"] = {
+        "status": "ok" if EMERGENT_LLM_KEY else "missing_key",
+        "key_prefix": EMERGENT_LLM_KEY[:12] + "..." if EMERGENT_LLM_KEY else None,
+        "model": "claude-sonnet-4-5-20250929",
+    }
+
+    # ── Grok (xAI) — live ping ──
+    grok_status = {"key_prefix": XAI_API_KEY[:12] + "..." if XAI_API_KEY else None}
+    if XAI_API_KEY:
+        try:
+            test_resp = await xai_client.chat.completions.create(
+                model="grok-3",
+                messages=[{"role": "user", "content": "ping"}],
+                max_tokens=5,
+            )
+            grok_status["status"] = "ok"
+            grok_status["model"] = "grok-3"
+            grok_status["response_sample"] = test_resp.choices[0].message.content
+        except Exception as e:
+            err_str = str(e)
+            # Detect no-credits error specifically
+            if "credits" in err_str.lower() or "licenses" in err_str.lower():
+                grok_status["status"] = "no_credits"
+                grok_status["error"] = "xAI account has no credits or licenses. Add credits at: https://console.x.ai"
+                # Extract team URL if present
+                import re as _re
+                match = _re.search(r'https://console\.x\.ai/team/[^\s"]+', err_str)
+                if match:
+                    grok_status["credits_url"] = match.group(0)
+            else:
+                # Try fallback model
+                try:
+                    test_resp2 = await xai_client.chat.completions.create(
+                        model="grok-beta",
+                        messages=[{"role": "user", "content": "ping"}],
+                        max_tokens=5,
+                    )
+                    grok_status["status"] = "ok_fallback"
+                    grok_status["model"] = "grok-beta"
+                    grok_status["note"] = f"grok-3 failed: {err_str[:80]}"
+                except Exception as e2:
+                    grok_status["status"] = "error"
+                    grok_status["error"] = f"grok-3: {err_str[:120]} | grok-beta: {str(e2)[:120]}"
+    else:
+        grok_status["status"] = "missing_key"
+    checks["grok"] = grok_status
+
+    # ── Web Search ──
+    try:
+        from duckduckgo_search import DDGS
+        with DDGS() as ddgs:
+            r = list(ddgs.text("Alberta ETW appeal", max_results=1))
+        checks["web_search"] = {"status": "ok", "test_result_count": len(r)}
+    except Exception as e:
+        checks["web_search"] = {"status": "error", "error": str(e)[:120]}
+
+    # ── System ──
+    checks["system"] = {
+        "python": sys.version,
+        "platform": platform.platform(),
+        "db_name": DB_NAME,
+        "env_loaded": all([MONGO_URL, EMERGENT_LLM_KEY, XAI_API_KEY]),
+    }
+
+    # ── Overall status ──
+    all_ok = all(
+        v.get("status") in ("ok", "ok_fallback")
+        for k, v in checks.items()
+        if isinstance(v, dict) and k != "system"
+    )
+    return {
+        "overall": "healthy" if all_ok else "degraded",
+        "timestamp": utcnow().isoformat(),
+        "checks": checks,
+    }
+
+
 @app.get("/api/models")
 async def get_models():
     return {

@@ -6,7 +6,8 @@ No authentication required — app is open access.
 
 ### AI Models
 - **Claude Sonnet 4.5**: Uses EMERGENT_LLM_KEY (sk-emergent-c2a8c8c88900a9fBc3) in backend/.env
-- **Grok 3 (xAI)**: Uses XAI_API_KEY (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) in backend/.env
+- **Grok 3 (xAI)**: Uses XAI_API_KEY (xai-FPwPQ5BAfaIvMIC4ERLNOtHTn08L0En2PoPf8CJRD39mxgWQmZuo49Lg2pRhjgs7l6L78oGDm1wgi130) in backend/.env
+  - **NOTE**: xAI account currently has no credits — add at https://console.x.ai/team/891136df-18e0-4aac-897f-9a9de5e90430
 
 ### Database
 - MongoDB: mongodb://localhost:27017 | DB: scss_advocate
