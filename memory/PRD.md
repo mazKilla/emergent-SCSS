@@ -34,15 +34,35 @@ AI-powered Alberta social benefits adjudicator and appeal guidance platform. The
 - `GET /api/models` — Available AI models
 - Claude integration: emergentintegrations (claude-sonnet-4-5-20250929)
 - Grok3 integration: openai SDK with xAI base URL (grok-3 + grok-beta fallback)
+- **Email Converter routes (2026-03-31):**
+  - `POST /api/ec/upload` — Upload .eml/.mbox, background parse
+  - `GET /api/ec/jobs` — List all conversion jobs
+  - `GET /api/ec/jobs/{id}` — Job details + extracted emails
+  - `DELETE /api/ec/jobs/{id}` — Delete job + all emails/attachments
+  - `GET /api/ec/emails/{id}/download` — Download single email as .txt
+  - `GET /api/ec/jobs/{id}/export` — Export all emails as .zip (with attachment sub-folders)
+  - `GET /api/ec/emails/{id}/attachments` — List attachments (no base64)
+  - `GET /api/ec/attachments/{id}/download` — Download individual attachment
+  - Python email parser: .eml (email module) + .mbox (mailbox/regex split)
+  - Filename format: `YYYY/DD/MM:HH:MM - sender_subject`
+  - Attachments stored as base64 in MongoDB, indexed in .txt and .zip
 
 ### Frontend (`/app/frontend/src/`)
-- `App.js` — Main layout with full state management
-- `Header.js` — MazZKiLL@ logo, model selector toggle (Claude/Grok3), Email panel toggle
-- `Sidebar.js` — Session/case list, create new session, delete sessions
-- `ChatArea.js` — Chat messages, textarea input, quick start prompts, thinking animation
-- `MessageBubble.js` — Markdown rendering (react-markdown + remark-gfm), citations display
-- `EmailPanel.js` — Email CRUD, search, detail view, attach to chat
-- Design: #030305 deep black + #00FFD4 cyan + #A855F7 purple, Unbounded/IBM Plex Sans/JetBrains Mono fonts
+- `App.js` — Main layout with tab state (chat | converter)
+- `Header.js` — MazZKiLL@ logo, model selector, tab navigation (AI ADVOCATE | EMAIL CONVERTER)
+- `Sidebar.js` — Session/case list, create/delete
+- `ChatArea.js` — Chat messages, quick prompts, thinking animation
+- `MessageBubble.js` — Markdown rendering, citations
+- `EmailPanel.js` — Email CRUD, attach to chat
+- **`EmailConverter.js` (2026-03-31):**
+  - Upload zone: drag & drop, click-to-select .eml/.mbox
+  - Jobs table: JOB_ID, SOURCE_FILE, STATUS, PROGRESS, TIMESTAMP, ACTIONS
+  - Auto-polling when jobs are pending/processing
+  - Auto-ZIP download when job transitions to completed
+  - Job detail: expandable emails, body preview, attachment index
+  - Individual .txt download per email
+  - EXPORT_ALL_ZIP button
+  - Terminal UI: TWindow/TBtn/TBadge components matching original repo aesthetic
 
 ## Prioritized Backlog
 ### P0 (Critical — must have)
