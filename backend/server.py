@@ -676,3 +676,419 @@ async def get_policy_resources():
             },
         ]
     }
+
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# EMAIL CONVERTER — .EML / .MBOX → TEXT (mirrors original repo schema)
+# ═══════════════════════════════════════════════════════════════════════
+import email as _email_lib
+import mailbox as _mailbox_lib
+import zipfile
+import io
+import re
+import base64
+from email.header import decode_header as _decode_header
+import email.utils as _email_utils
+from fastapi import UploadFile, File, BackgroundTasks
+from fastapi.responses import StreamingResponse
+
+# MongoDB collections for email converter (mirrors original PostgreSQL schema)
+ec_jobs_col = db["ec_conversion_jobs"]
+ec_emails_col = db["ec_converted_emails"]
+ec_attachments_col = db["ec_email_attachments"]
+
+
+# ── Filename generator (matches TypeScript format: YYYY/DD/MM:HH:MM - sender_subject) ──
+def _sanitize_filename(s: str) -> str:
+    s = re.sub(r'[\\/:*?"<>|]', '_', s or "")
+    s = re.sub(r'\s+', '_', s.strip())
+    return s[:60] or "unknown"
+
+
+def _generate_email_filename(dt, sender: str, subject: str) -> str:
+    if dt:
+        try:
+            date_part = f"{dt.year}/{str(dt.day).zfill(2)}/{str(dt.month).zfill(2)}:{str(dt.hour).zfill(2)}:{str(dt.minute).zfill(2)}"
+        except Exception:
+            date_part = "unknown/date"
+    else:
+        date_part = "unknown/date"
+    sender_clean = _sanitize_filename(sender)
+    subject_clean = _sanitize_filename(subject)
+    return f"{date_part} - {sender_clean}_{subject_clean}"
+
+
+def _decode_header_value(val: str) -> str:
+    if not val:
+        return ""
+    try:
+        parts = _decode_header(val)
+        decoded = []
+        for part, enc in parts:
+            if isinstance(part, bytes):
+                decoded.append(part.decode(enc or "utf-8", errors="replace"))
+            else:
+                decoded.append(str(part))
+        return " ".join(decoded)
+    except Exception:
+        return val
+
+
+def _extract_text_from_html(html_str: str) -> str:
+    try:
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(html_str, "html.parser")
+        for tag in soup(["script", "style"]):
+            tag.decompose()
+        return soup.get_text(separator="\n", strip=True)
+    except Exception:
+        return re.sub(r'<[^>]+>', '', html_str)
+
+
+def _parse_single_email(msg) -> dict:
+    """Parse a single email.message.Message object into structured data."""
+    subject = _decode_header_value(msg.get("Subject", ""))
+    sender = _decode_header_value(msg.get("From", ""))
+    recipients = _decode_header_value(msg.get("To", ""))
+    date_str = msg.get("Date", "")
+    email_date = None
+    if date_str:
+        try:
+            parsed_tuple = _email_utils.parsedate_tz(date_str)
+            if parsed_tuple:
+                ts = _email_utils.mktime_tz(parsed_tuple)
+                email_date = datetime.fromtimestamp(ts, timezone.utc)
+        except Exception:
+            pass
+
+    # Extract body
+    body_text = ""
+    body_html = ""
+    attachments = []
+
+    if msg.is_multipart():
+        for part in msg.walk():
+            ct = part.get_content_type()
+            disp = str(part.get("Content-Disposition", ""))
+            if ct == "text/plain" and "attachment" not in disp:
+                try:
+                    body_text += part.get_payload(decode=True).decode(
+                        part.get_content_charset("utf-8") or "utf-8", errors="replace"
+                    )
+                except Exception:
+                    pass
+            elif ct == "text/html" and "attachment" not in disp and not body_text:
+                try:
+                    body_html = part.get_payload(decode=True).decode(
+                        part.get_content_charset("utf-8") or "utf-8", errors="replace"
+                    )
+                except Exception:
+                    pass
+            elif "attachment" in disp or (part.get_filename()):
+                fname = _decode_header_value(part.get_filename() or "attachment")
+                try:
+                    raw = part.get_payload(decode=True) or b""
+                    attachments.append({
+                        "filename": fname,
+                        "content_type": ct,
+                        "size": len(raw),
+                        "data_base64": base64.b64encode(raw).decode("ascii"),
+                    })
+                except Exception:
+                    attachments.append({
+                        "filename": fname,
+                        "content_type": ct,
+                        "size": 0,
+                        "data_base64": "",
+                    })
+    else:
+        ct = msg.get_content_type()
+        try:
+            payload = msg.get_payload(decode=True)
+            if payload:
+                text = payload.decode(msg.get_content_charset("utf-8") or "utf-8", errors="replace")
+                if ct == "text/html":
+                    body_html = text
+                else:
+                    body_text = text
+        except Exception:
+            pass
+
+    if not body_text and body_html:
+        body_text = _extract_text_from_html(body_html)
+
+    att_names = ", ".join(a["filename"] for a in attachments) if attachments else None
+    generated_filename = _generate_email_filename(email_date, sender, subject)
+
+    return {
+        "generated_filename": generated_filename,
+        "subject": subject or "<NO SUBJECT>",
+        "sender": sender or "<UNKNOWN>",
+        "recipients": recipients or "",
+        "email_date": email_date,
+        "body_text": body_text.strip() or "<EMPTY BODY>",
+        "has_attachments": len(attachments) > 0,
+        "attachment_count": len(attachments),
+        "attachment_names": att_names,
+        "attachments": attachments,
+    }
+
+
+def _build_txt_content(email_doc: dict) -> str:
+    lines = [
+        f"FILE: {email_doc.get('generated_filename', 'unknown')}",
+        "=" * 60,
+        f"Subject:    {email_doc.get('subject', '')}",
+        f"From:       {email_doc.get('sender', '')}",
+        f"To:         {email_doc.get('recipients', '')}",
+        f"Date:       {email_doc.get('email_date', 'Unknown')}",
+    ]
+    if email_doc.get("has_attachments"):
+        lines.append(f"Attachments ({email_doc['attachment_count']}): {email_doc.get('attachment_names', '')}")
+    lines += ["=" * 60, "", email_doc.get("body_text", "")]
+    if email_doc.get("has_attachments") and email_doc.get("attachment_names"):
+        lines += [
+            "",
+            "── ATTACHMENT INDEX ──",
+        ]
+        for name in (email_doc.get("attachment_names") or "").split(","):
+            lines.append(f"  [ATTACHMENT] {name.strip()}")
+        lines.append("── (Attachments stored in database, available for retrieval) ──")
+    return "\n".join(lines)
+
+
+async def _process_job_background(job_id: str, file_bytes: bytes, file_type: str):
+    """Background task: parse emails and store in MongoDB."""
+    oid = ObjectId(job_id)
+    ec_jobs_col.update_one({"_id": oid}, {"$set": {"status": "processing", "updated_at": utcnow()}})
+
+    try:
+        parsed_emails = []
+        if file_type == "eml":
+            msg = _email_lib.message_from_bytes(file_bytes, policy=_email_lib.policy.compat32)
+            parsed_emails = [_parse_single_email(msg)]
+        elif file_type == "mbox":
+            mbox_buf = io.BytesIO(file_bytes)
+            mbox_buf.seek(0)
+            text_content = file_bytes.decode("utf-8", errors="replace")
+            from_pattern = re.compile(r'^From\s+\S+.*$', re.MULTILINE)
+            splits = from_pattern.split(text_content)
+            splits = [s for s in splits if s.strip()]
+            if not splits:
+                splits = [text_content]
+            for chunk in splits:
+                try:
+                    msg = _email_lib.message_from_string(
+                        "From nobody\n" + chunk if not chunk.startswith("From") else chunk,
+                        policy=_email_lib.policy.compat32
+                    )
+                    parsed = _parse_single_email(msg)
+                    if parsed["subject"] != "<NO SUBJECT>" or parsed["sender"] != "<UNKNOWN>" or len(parsed["body_text"]) > 5:
+                        parsed_emails.append(parsed)
+                except Exception:
+                    continue
+
+        total = len(parsed_emails)
+        ec_jobs_col.update_one({"_id": oid}, {"$set": {"total_emails": total, "updated_at": utcnow()}})
+
+        for i, ep in enumerate(parsed_emails):
+            # Insert email record
+            email_doc = {
+                "job_id": job_id,
+                "generated_filename": ep["generated_filename"],
+                "subject": ep["subject"],
+                "sender": ep["sender"],
+                "recipients": ep["recipients"],
+                "email_date": ep["email_date"],
+                "body_text": ep["body_text"],
+                "has_attachments": ep["has_attachments"],
+                "attachment_count": ep["attachment_count"],
+                "attachment_names": ep["attachment_names"],
+                "created_at": utcnow(),
+            }
+            email_result = ec_emails_col.insert_one(email_doc)
+            email_id = str(email_result.inserted_id)
+
+            # Insert attachments
+            for att in ep["attachments"]:
+                ec_attachments_col.insert_one({
+                    "email_id": email_id,
+                    "filename": att["filename"],
+                    "content_type": att["content_type"],
+                    "size": att["size"],
+                    "data_base64": att["data_base64"],
+                    "created_at": utcnow(),
+                })
+
+            ec_jobs_col.update_one({"_id": oid}, {"$set": {"processed_emails": i + 1, "updated_at": utcnow()}})
+
+        ec_jobs_col.update_one(
+            {"_id": oid},
+            {"$set": {"status": "completed", "processed_emails": total, "updated_at": utcnow()}}
+        )
+    except Exception as e:
+        ec_jobs_col.update_one(
+            {"_id": oid},
+            {"$set": {"status": "failed", "error_message": str(e), "updated_at": utcnow()}}
+        )
+
+
+# ── EC Routes ──────────────────────────────────────────────────────────
+
+@app.post("/api/ec/upload")
+async def ec_upload(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+):
+    filename = file.filename or "unknown"
+    ext = filename.rsplit(".", 1)[-1].lower()
+    if ext not in ("eml", "mbox"):
+        raise HTTPException(status_code=400, detail="Only .eml and .mbox files are supported")
+
+    file_bytes = await file.read()
+
+    job_doc = {
+        "original_filename": filename,
+        "file_type": ext,
+        "status": "pending",
+        "total_emails": 0,
+        "processed_emails": 0,
+        "error_message": None,
+        "created_at": utcnow(),
+        "updated_at": utcnow(),
+    }
+    result = ec_jobs_col.insert_one(job_doc)
+    job_id = str(result.inserted_id)
+
+    background_tasks.add_task(_process_job_background, job_id, file_bytes, ext)
+
+    job_doc["id"] = job_id
+    job_doc.pop("_id", None)
+    return job_doc
+
+
+@app.get("/api/ec/jobs")
+async def ec_list_jobs(
+    limit: int = Query(10, le=100),
+    offset: int = Query(0),
+):
+    total = ec_jobs_col.count_documents({})
+    docs = list(ec_jobs_col.find({}, sort=[("created_at", -1)]).skip(offset).limit(limit))
+    return {"jobs": serialize_doc(docs), "total": total}
+
+
+@app.get("/api/ec/jobs/{job_id}")
+async def ec_get_job(job_id: str):
+    try:
+        oid = ObjectId(job_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid job ID")
+    job = ec_jobs_col.find_one({"_id": oid})
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    emails = list(ec_emails_col.find({"job_id": job_id}, sort=[("created_at", 1)]))
+    return {"job": serialize_doc(job), "emails": serialize_doc(emails)}
+
+
+@app.delete("/api/ec/jobs/{job_id}")
+async def ec_delete_job(job_id: str):
+    try:
+        oid = ObjectId(job_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid job ID")
+    emails = list(ec_emails_col.find({"job_id": job_id}, {"_id": 1}))
+    email_ids = [str(e["_id"]) for e in emails]
+    if email_ids:
+        ec_attachments_col.delete_many({"email_id": {"$in": email_ids}})
+    ec_emails_col.delete_many({"job_id": job_id})
+    ec_jobs_col.delete_one({"_id": oid})
+    return {"success": True}
+
+
+@app.get("/api/ec/emails/{email_id}/download")
+async def ec_download_email(email_id: str):
+    try:
+        oid = ObjectId(email_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid email ID")
+    doc = ec_emails_col.find_one({"_id": oid})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Email not found")
+    content = _build_txt_content(doc)
+    safe_name = re.sub(r'[^\w\-.]', '_', doc.get("generated_filename", "email"))
+    return StreamingResponse(
+        io.BytesIO(content.encode("utf-8")),
+        media_type="text/plain",
+        headers={"Content-Disposition": f'attachment; filename="{safe_name}.txt"'},
+    )
+
+
+@app.get("/api/ec/jobs/{job_id}/export")
+async def ec_export_job_zip(job_id: str):
+    try:
+        oid = ObjectId(job_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid job ID")
+    job = ec_jobs_col.find_one({"_id": oid})
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    emails = list(ec_emails_col.find({"job_id": job_id}, sort=[("created_at", 1)]))
+
+    zip_buf = io.BytesIO()
+    with zipfile.ZipFile(zip_buf, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for em in emails:
+            content = _build_txt_content(em)
+            fname = re.sub(r'[^\w\-./]', '_', em.get("generated_filename", "email")) + ".txt"
+            zf.writestr(fname, content)
+
+            # Include attachments if any
+            if em.get("has_attachments"):
+                att_docs = list(ec_attachments_col.find({"email_id": str(em["_id"])}))
+                for att in att_docs:
+                    try:
+                        att_bytes = base64.b64decode(att.get("data_base64", ""))
+                        att_fname = re.sub(r'[^\w\-.]', '_', att.get("filename", "attachment"))
+                        base_fname = fname.replace(".txt", "")
+                        zf.writestr(f"{base_fname}_attachments/{att_fname}", att_bytes)
+                    except Exception:
+                        pass
+
+    zip_buf.seek(0)
+    safe_job_name = re.sub(r'[^\w\-.]', '_', job.get("original_filename", "job"))
+    return StreamingResponse(
+        zip_buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="CONVERTED_{safe_job_name}.zip"'},
+    )
+
+
+@app.get("/api/ec/emails/{email_id}/attachments")
+async def ec_get_attachments(email_id: str):
+    docs = list(ec_attachments_col.find(
+        {"email_id": email_id},
+        {"data_base64": 0}  # exclude large base64 from list
+    ))
+    return {"attachments": serialize_doc(docs)}
+
+
+@app.get("/api/ec/attachments/{att_id}/download")
+async def ec_download_attachment(att_id: str):
+    try:
+        oid = ObjectId(att_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid attachment ID")
+    doc = ec_attachments_col.find_one({"_id": oid})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+    try:
+        att_bytes = base64.b64decode(doc.get("data_base64", ""))
+    except Exception:
+        att_bytes = b""
+    fname = doc.get("filename", "attachment")
+    ct = doc.get("content_type", "application/octet-stream")
+    return StreamingResponse(
+        io.BytesIO(att_bytes),
+        media_type=ct,
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )

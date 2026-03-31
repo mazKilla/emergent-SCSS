@@ -3,6 +3,7 @@ import Header from "./components/Header";
 import Sidebar from "./components/Sidebar";
 import ChatArea from "./components/ChatArea";
 import EmailPanel from "./components/EmailPanel";
+import EmailConverter from "./components/EmailConverter";
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
@@ -14,6 +15,7 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [showEmailPanel, setShowEmailPanel] = useState(false);
   const [emailCount, setEmailCount] = useState(0);
+  const [activeTab, setActiveTab] = useState("chat"); // "chat" | "converter"
 
   // Load sessions on mount
   const loadSessions = useCallback(async () => {
@@ -178,36 +180,44 @@ export default function App() {
         showEmailPanel={showEmailPanel}
         onToggleEmailPanel={() => setShowEmailPanel(v => !v)}
         emailCount={emailCount}
+        activeTab={activeTab}
+        onTabChange={setActiveTab}
       />
 
       <div className="flex flex-1 overflow-hidden">
-        {/* Left Sidebar */}
-        <Sidebar
-          sessions={sessions}
-          activeSession={activeSession}
-          onSelectSession={(s) => setActiveSession(s)}
-          onNewSession={createSession}
-          onDeleteSession={deleteSession}
-        />
+        {activeTab === "chat" ? (
+          <>
+            {/* Left Sidebar */}
+            <Sidebar
+              sessions={sessions}
+              activeSession={activeSession}
+              onSelectSession={(s) => setActiveSession(s)}
+              onNewSession={createSession}
+              onDeleteSession={deleteSession}
+            />
 
-        {/* Main Chat Area */}
-        <ChatArea
-          messages={messages}
-          isLoading={isLoading}
-          onSendMessage={sendMessage}
-          activeSession={activeSession}
-          selectedModel={selectedModel}
-        />
+            {/* Main Chat Area */}
+            <ChatArea
+              messages={messages}
+              isLoading={isLoading}
+              onSendMessage={sendMessage}
+              activeSession={activeSession}
+              selectedModel={selectedModel}
+            />
 
-        {/* Right Email Panel */}
-        {showEmailPanel && (
-          <EmailPanel
-            apiUrl={API}
-            onEmailCountChange={setEmailCount}
-            onAttachToChat={(emailContent) => {
-              sendMessage(`[EMAIL REFERENCE]\n\n${emailContent}`);
-            }}
-          />
+            {/* Right Email Panel */}
+            {showEmailPanel && (
+              <EmailPanel
+                apiUrl={API}
+                onEmailCountChange={setEmailCount}
+                onAttachToChat={(emailContent) => {
+                  sendMessage(`[EMAIL REFERENCE]\n\n${emailContent}`);
+                }}
+              />
+            )}
+          </>
+        ) : (
+          <EmailConverter />
         )}
       </div>
     </div>
