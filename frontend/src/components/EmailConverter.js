@@ -2,34 +2,42 @@ import React, { useState, useCallback, useEffect, useRef } from "react";
 import {
   Upload, Loader2, AlertCircle, CheckCircle2, Clock, RefreshCw,
   AlertTriangle, FileCode, Eye, Trash2, ArrowLeft, Download,
-  FileArchive, Mail, Paperclip, User, Calendar, AlignLeft, Zap
+  FileArchive, Mail, Paperclip, User, Calendar, AlignLeft, Zap,
+  FolderOpen, FileText, File, CheckSquare, Square, Send
 } from "lucide-react";
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
-// ── Terminal UI primitives (matching original repo aesthetic) ──────────
+const ACCEPTED_EXTS = ["eml", "mbox", "pdf", "txt", "text", "html", "htm", "msg"];
+const ACCEPT_STR = ".eml,.mbox,.pdf,.txt,.text,.html,.htm,.msg";
+
+function getFileIcon(filename) {
+  const ext = (filename || "").split(".").pop().toLowerCase();
+  if (ext === "pdf") return <File size={12} style={{ color: "#F87171" }} />;
+  if (["txt", "text"].includes(ext)) return <FileText size={12} style={{ color: "#A1A1AA" }} />;
+  if (["html", "htm"].includes(ext)) return <FileCode size={12} style={{ color: "#FBBF24" }} />;
+  return <Mail size={12} style={{ color: "#00FFD4" }} />;
+}
+
+// ── Terminal UI primitives ──────────────────────────────────────────────
 function TWindow({ children, title, style }) {
   return (
-    <div
-      style={{
-        border: "1px solid rgba(0,255,212,0.4)",
-        background: "rgba(3,3,5,0.97)",
-        boxShadow: "0 0 20px rgba(0,255,212,0.08)",
-        position: "relative",
-        ...style,
-      }}
-    >
+    <div style={{
+      border: "1px solid rgba(0,255,212,0.4)",
+      background: "rgba(3,3,5,0.97)",
+      boxShadow: "0 0 20px rgba(0,255,212,0.08)",
+      position: "relative",
+      ...style,
+    }}>
       {title && (
-        <div
-          style={{
-            borderBottom: "1px solid rgba(0,255,212,0.3)",
-            background: "rgba(0,255,212,0.07)",
-            padding: "4px 12px",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-          }}
-        >
+        <div style={{
+          borderBottom: "1px solid rgba(0,255,212,0.3)",
+          background: "rgba(0,255,212,0.07)",
+          padding: "4px 12px",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+        }}>
           <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: "11px", color: "#00FFD4", textTransform: "uppercase", letterSpacing: "0.15em" }}>
             {title}
           </span>
@@ -66,6 +74,7 @@ function TBtn({ children, onClick, variant = "primary", disabled, style, testId,
     destructive: { background: "rgba(239,68,68,0.1)", color: "#EF4444", border: "1px solid rgba(239,68,68,0.4)" },
     ghost: { background: "transparent", color: "#A1A1AA", border: "1px solid transparent" },
     accent: { background: "rgba(168,85,247,0.15)", color: "#A855F7", border: "1px solid rgba(168,85,247,0.5)" },
+    success: { background: "rgba(0,255,212,0.2)", color: "#00FFD4", border: "1px solid #00FFD4" },
   };
   return (
     <button type={type} onClick={onClick} disabled={disabled} data-testid={testId} style={{ ...base, ...variants[variant], ...style }}>
@@ -97,85 +106,183 @@ function TBadge({ children, variant = "default" }) {
   );
 }
 
+// ── Confirmation Modal ────────────────────────────────────────────────
+function ConfirmModal({ count, onConfirm, onCancel }) {
+  return (
+    <div style={{
+      position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)",
+      display: "flex", alignItems: "center", justifyContent: "center",
+      zIndex: 999, backdropFilter: "blur(4px)",
+    }}>
+      <TWindow title="SYS.CONFIRM_ACTION" style={{ maxWidth: "420px", width: "90%" }}>
+        <div style={{ textAlign: "center", padding: "8px 0" }}>
+          <Send size={32} style={{ color: "#A855F7", margin: "0 auto 12px" }} />
+          <p style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: "15px", fontWeight: "bold", color: "#F8F8F8", marginBottom: "8px" }}>
+            SEND {count} RECORD{count !== 1 ? "S" : ""} TO ADVOCATE?
+          </p>
+          <p style={{ color: "#A1A1AA", fontSize: "12px", marginBottom: "20px", lineHeight: "1.6" }}>
+            {count} selected item{count !== 1 ? "s" : ""} will be dispatched to the AI Advocate for analysis. This will switch to the Chat tab.
+          </p>
+          <div style={{ display: "flex", gap: "10px", justifyContent: "center" }}>
+            <TBtn variant="ghost" onClick={onCancel}>CANCEL</TBtn>
+            <TBtn variant="accent" onClick={onConfirm} testId="confirm-bulk-send">
+              <Zap size={13} /> CONFIRM_DISPATCH
+            </TBtn>
+          </div>
+        </div>
+      </TWindow>
+    </div>
+  );
+}
 
 // ── Upload Zone ──────────────────────────────────────────────────────
 function UploadZone({ onUploadDone }) {
   const [dragging, setDragging] = useState(false);
-  const [uploading, setUploading] = useState(false);
-  const [error, setError] = useState(null);
-  const inputRef = useRef(null);
+  const [uploadQueue, setUploadQueue] = useState([]); // { file, status, error }
+  const [isUploading, setIsUploading] = useState(false);
+  const [globalError, setGlobalError] = useState(null);
+  const fileInputRef = useRef(null);
+  const folderInputRef = useRef(null);
 
-  const upload = useCallback(async (file) => {
-    if (!file) return;
-    const ext = file.name.split(".").pop().toLowerCase();
-    if (!["eml", "mbox"].includes(ext)) {
-      setError("Invalid file type. Only .eml and .mbox files are supported.");
+  const filterFiles = (fileList) => {
+    const arr = Array.from(fileList);
+    return arr.filter(f => {
+      const ext = f.name.split(".").pop().toLowerCase();
+      return ACCEPTED_EXTS.includes(ext);
+    });
+  };
+
+  const uploadFiles = useCallback(async (files) => {
+    if (!files.length) {
+      setGlobalError("No supported files found. Accepted: " + ACCEPTED_EXTS.join(", "));
       return;
     }
-    setError(null);
-    setUploading(true);
-    try {
-      const fd = new FormData();
-      fd.append("file", file);
-      const res = await fetch(`${API}/api/ec/upload`, { method: "POST", body: fd });
-      if (!res.ok) {
-        const d = await res.json();
-        throw new Error(d.detail || "Upload failed");
+    setGlobalError(null);
+    const queue = files.map(f => ({ file: f, status: "pending", error: null }));
+    setUploadQueue(queue);
+    setIsUploading(true);
+
+    const updated = [...queue];
+    for (let i = 0; i < files.length; i++) {
+      updated[i] = { ...updated[i], status: "uploading" };
+      setUploadQueue([...updated]);
+      try {
+        const fd = new FormData();
+        fd.append("file", files[i]);
+        const res = await fetch(`${API}/api/ec/upload`, { method: "POST", body: fd });
+        if (!res.ok) {
+          const d = await res.json().catch(() => ({}));
+          throw new Error(d.detail || "Upload failed");
+        }
+        updated[i] = { ...updated[i], status: "done" };
+      } catch (e) {
+        updated[i] = { ...updated[i], status: "error", error: e.message };
       }
-      onUploadDone();
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setUploading(false);
+      setUploadQueue([...updated]);
     }
+
+    setIsUploading(false);
+    onUploadDone();
+    // Clear queue after a short delay
+    setTimeout(() => setUploadQueue([]), 3000);
   }, [onUploadDone]);
 
   const onDrop = useCallback((e) => {
     e.preventDefault();
     setDragging(false);
-    const file = e.dataTransfer.files[0];
-    if (file) upload(file);
-  }, [upload]);
+    const files = filterFiles(e.dataTransfer.files);
+    uploadFiles(files);
+  }, [uploadFiles]);
+
+  const onFileChange = (e) => {
+    const files = filterFiles(e.target.files);
+    if (files.length) uploadFiles(files);
+    else setGlobalError("No supported files selected. Accepted: " + ACCEPTED_EXTS.join(", "));
+    e.target.value = "";
+  };
+
+  const onFolderChange = (e) => {
+    const files = filterFiles(e.target.files);
+    if (files.length) uploadFiles(files);
+    else setGlobalError("No supported files found in folder. Accepted: " + ACCEPTED_EXTS.join(", "));
+    e.target.value = "";
+  };
+
+  const doneCount = uploadQueue.filter(q => q.status === "done").length;
+  const errorCount = uploadQueue.filter(q => q.status === "error").length;
 
   return (
     <TWindow title="SYS.INPUT_STREAM" style={{ marginBottom: "24px" }}>
+      {/* Drag-drop zone */}
       <div
         data-testid="upload-dropzone"
         onDragOver={e => { e.preventDefault(); setDragging(true); }}
         onDragLeave={() => setDragging(false)}
         onDrop={onDrop}
-        onClick={() => !uploading && inputRef.current?.click()}
         style={{
           border: `2px dashed ${dragging ? "#00FFD4" : "rgba(0,255,212,0.3)"}`,
-          background: dragging ? "rgba(0,255,212,0.08)" : uploading ? "rgba(0,255,212,0.03)" : "transparent",
-          padding: "40px 20px",
+          background: dragging ? "rgba(0,255,212,0.08)" : "transparent",
+          padding: "32px 20px",
           display: "flex",
           flexDirection: "column",
           alignItems: "center",
           justifyContent: "center",
-          cursor: uploading ? "wait" : "pointer",
           transition: "all 0.3s",
           position: "relative",
           overflow: "hidden",
         }}
       >
+        {/* Hidden inputs */}
         <input
-          ref={inputRef}
+          ref={fileInputRef}
           type="file"
-          accept=".eml,.mbox"
+          accept={ACCEPT_STR}
+          multiple
           style={{ display: "none" }}
-          onChange={e => upload(e.target.files[0])}
+          onChange={onFileChange}
           data-testid="file-upload-input"
         />
+        <input
+          ref={folderInputRef}
+          type="file"
+          webkitdirectory="true"
+          directory="true"
+          multiple
+          style={{ display: "none" }}
+          onChange={onFolderChange}
+          data-testid="folder-upload-input"
+        />
 
-        {uploading ? (
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", color: "#00FFD4" }}>
-            <Loader2 size={40} style={{ marginBottom: "12px", animation: "spin 1s linear infinite" }} />
-            <p style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: "16px", fontWeight: "bold", letterSpacing: "0.2em" }}>
-              PROCESSING_STREAM...
+        {isUploading ? (
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", color: "#00FFD4", width: "100%" }}>
+            <Loader2 size={36} style={{ marginBottom: "12px", animation: "spin 1s linear infinite" }} />
+            <p style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: "14px", fontWeight: "bold", letterSpacing: "0.2em", marginBottom: "16px" }}>
+              PROCESSING {uploadQueue.length} FILE{uploadQueue.length !== 1 ? "S" : ""}...
             </p>
-            <p style={{ fontSize: "12px", color: "rgba(0,255,212,0.6)", marginTop: "6px", fontFamily: "'JetBrains Mono', monospace" }}>
-              UPLOADING & INITIALIZING CONVERSION
+            <div style={{ width: "100%", maxWidth: "400px", display: "flex", flexDirection: "column", gap: "4px" }}>
+              {uploadQueue.slice(0, 8).map((q, i) => (
+                <div key={i} style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "11px", fontFamily: "'JetBrains Mono', monospace" }}>
+                  {q.status === "done" ? <CheckCircle2 size={11} style={{ color: "#00FFD4", flexShrink: 0 }} /> :
+                   q.status === "error" ? <AlertCircle size={11} style={{ color: "#EF4444", flexShrink: 0 }} /> :
+                   q.status === "uploading" ? <Loader2 size={11} style={{ animation: "spin 1s linear infinite", color: "#A855F7", flexShrink: 0 }} /> :
+                   <Clock size={11} style={{ color: "#A1A1AA", flexShrink: 0 }} />}
+                  <span style={{ color: q.status === "error" ? "#EF4444" : q.status === "done" ? "#00FFD4" : "#A1A1AA", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {q.file.name}
+                  </span>
+                </div>
+              ))}
+              {uploadQueue.length > 8 && (
+                <p style={{ color: "rgba(0,255,212,0.5)", fontSize: "10px", fontFamily: "'JetBrains Mono', monospace" }}>
+                  +{uploadQueue.length - 8} more...
+                </p>
+              )}
+            </div>
+          </div>
+        ) : uploadQueue.length > 0 ? (
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", color: "#00FFD4" }}>
+            <CheckCircle2 size={36} style={{ marginBottom: "10px" }} />
+            <p style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: "13px", letterSpacing: "0.1em" }}>
+              {doneCount} UPLOADED — {errorCount > 0 ? `${errorCount} FAILED` : "ALL OK"}
             </p>
           </div>
         ) : (
@@ -183,23 +290,41 @@ function UploadZone({ onUploadDone }) {
             <div style={{
               background: "#030305",
               border: "1px solid rgba(0,255,212,0.4)",
-              padding: "16px",
+              padding: "14px",
               borderRadius: "50%",
-              marginBottom: "16px",
+              marginBottom: "14px",
               boxShadow: "0 0 15px rgba(0,255,212,0.15)",
             }}>
-              <Upload size={28} style={{ color: dragging ? "#00FFD4" : "rgba(0,255,212,0.6)" }} />
+              <Upload size={26} style={{ color: dragging ? "#00FFD4" : "rgba(0,255,212,0.6)" }} />
             </div>
-            <p style={{ fontFamily: "'JetBrains Mono', monospace", fontWeight: "bold", fontSize: "18px", color: "#00FFD4", marginBottom: "8px", letterSpacing: "0.1em" }}>
-              INITIATE_UPLOAD
+            <p style={{ fontFamily: "'JetBrains Mono', monospace", fontWeight: "bold", fontSize: "16px", color: "#00FFD4", marginBottom: "6px", letterSpacing: "0.1em" }}>
+              DRAG & DROP FILES
             </p>
-            <p style={{ color: "#A1A1AA", fontSize: "13px", textAlign: "center", maxWidth: "400px", marginBottom: "20px", lineHeight: "1.6" }}>
-              Drag & drop{" "}
-              <span style={{ color: "#00FFD4" }}>.eml</span> or{" "}
-              <span style={{ color: "#00FFD4" }}>.mbox</span>{" "}
-              files here, or click to select. System will parse and structure all email contents.
+            <p style={{ color: "#A1A1AA", fontSize: "12px", textAlign: "center", maxWidth: "440px", marginBottom: "8px", lineHeight: "1.6" }}>
+              Supports: <span style={{ color: "#00FFD4" }}>.eml  .mbox  .pdf  .txt  .html  .htm  .msg</span>
             </p>
-            <TBtn variant="outline">SELECT_FILE</TBtn>
+            <p style={{ color: "rgba(0,255,212,0.4)", fontSize: "11px", fontFamily: "'JetBrains Mono', monospace", marginBottom: "18px" }}>
+              — or —
+            </p>
+            <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", justifyContent: "center" }}>
+              <TBtn
+                variant="outline"
+                onClick={e => { e.stopPropagation(); fileInputRef.current?.click(); }}
+                testId="select-files-btn"
+              >
+                <FileCode size={13} /> SELECT_FILES
+              </TBtn>
+              <TBtn
+                variant="primary"
+                onClick={e => { e.stopPropagation(); folderInputRef.current?.click(); }}
+                testId="select-folder-btn"
+              >
+                <FolderOpen size={13} /> SELECT_FOLDER
+              </TBtn>
+            </div>
+            <p style={{ color: "rgba(0,255,212,0.35)", fontSize: "10px", fontFamily: "'JetBrains Mono', monospace", marginTop: "10px", textAlign: "center" }}>
+              SELECT_FOLDER scans all subfolders recursively
+            </p>
           </>
         )}
 
@@ -211,14 +336,14 @@ function UploadZone({ onUploadDone }) {
             backdropFilter: "blur(4px)",
             border: "3px solid #00FFD4",
           }}>
-            <p style={{ fontFamily: "'JetBrains Mono', monospace", fontWeight: "bold", fontSize: "24px", color: "#00FFD4", letterSpacing: "0.2em" }}>
+            <p style={{ fontFamily: "'JetBrains Mono', monospace", fontWeight: "bold", fontSize: "22px", color: "#00FFD4", letterSpacing: "0.2em" }}>
               DROP_TO_EXECUTE
             </p>
           </div>
         )}
       </div>
 
-      {error && (
+      {globalError && (
         <div style={{
           marginTop: "12px", padding: "12px",
           background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.4)",
@@ -227,7 +352,7 @@ function UploadZone({ onUploadDone }) {
           <AlertCircle size={16} style={{ flexShrink: 0, marginTop: "2px" }} />
           <div>
             <p style={{ fontFamily: "'JetBrains Mono', monospace", fontWeight: "bold", marginBottom: "2px" }}>ERR_UPLOAD_FAILED</p>
-            <p>{error}</p>
+            <p>{globalError}</p>
           </div>
         </div>
       )}
@@ -268,7 +393,6 @@ function JobsTable({ onViewJob }) {
       setJobs(newJobs);
       setTotal(data.total || 0);
 
-      // Auto-download ZIP when job transitions to completed
       for (const job of newJobs) {
         const prev = prevStatuses.current[job.id];
         if (prev && prev !== "completed" && job.status === "completed" && job.total_emails > 0) {
@@ -288,7 +412,6 @@ function JobsTable({ onViewJob }) {
 
   useEffect(() => { fetchJobs(); }, [fetchJobs]);
 
-  // Polling for pending/processing jobs
   useEffect(() => {
     clearInterval(pollRef.current);
     const hasPending = jobs.some(j => j.status === "pending" || j.status === "processing");
@@ -314,9 +437,7 @@ function JobsTable({ onViewJob }) {
           <span style={{ fontFamily: "'JetBrains Mono', monospace", fontWeight: "bold", color: "#00FFD4", letterSpacing: "0.1em" }}>
             CONVERSION_HISTORY
           </span>
-          {fetching && <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: "10px", color: "rgba(0,255,212,0.5)" }}>
-            fetching updates...
-          </span>}
+          {fetching && <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: "10px", color: "rgba(0,255,212,0.5)" }}>fetching updates...</span>}
         </div>
         <TBtn variant="outline" onClick={() => fetchJobs(true)} style={{ padding: "4px 10px" }}>
           <RefreshCw size={11} style={{ animation: fetching ? "spin 1s linear infinite" : "none" }} />
@@ -333,7 +454,7 @@ function JobsTable({ onViewJob }) {
         <div style={{ padding: "60px 20px", textAlign: "center", border: "1px dashed rgba(0,255,212,0.15)", background: "rgba(0,255,212,0.02)", display: "flex", flexDirection: "column", alignItems: "center" }}>
           <FileCode size={40} style={{ color: "rgba(0,255,212,0.3)", marginBottom: "12px" }} />
           <p style={{ fontFamily: "'JetBrains Mono', monospace", color: "rgba(0,255,212,0.5)", letterSpacing: "0.2em" }}>QUEUE_EMPTY</p>
-          <p style={{ color: "#A1A1AA", fontSize: "12px", marginTop: "6px" }}>Initialize process by uploading a file above.</p>
+          <p style={{ color: "#A1A1AA", fontSize: "12px", marginTop: "6px" }}>Upload files above to begin processing.</p>
         </div>
       ) : (
         <div style={{ overflowX: "auto" }}>
@@ -347,8 +468,7 @@ function JobsTable({ onViewJob }) {
             </thead>
             <tbody>
               {jobs.map(job => (
-                <tr
-                  key={job.id}
+                <tr key={job.id}
                   style={{ transition: "background 0.15s" }}
                   onMouseEnter={e => e.currentTarget.style.background = "rgba(0,255,212,0.03)"}
                   onMouseLeave={e => e.currentTarget.style.background = "transparent"}
@@ -360,12 +480,12 @@ function JobsTable({ onViewJob }) {
                   </td>
                   <td style={tdStyle}>
                     <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                      <FileCode size={14} style={{ color: "rgba(0,255,212,0.6)", flexShrink: 0 }} />
+                      {getFileIcon(job.original_filename)}
                       <span style={{ fontWeight: "bold", color: "#00FFD4", maxWidth: "180px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontFamily: "'JetBrains Mono', monospace", fontSize: "12px" }}>
                         {job.original_filename}
                       </span>
                       <span style={{ fontSize: "10px", border: "1px solid rgba(0,255,212,0.3)", padding: "0 4px", color: "rgba(0,255,212,0.6)", fontFamily: "'JetBrains Mono', monospace", flexShrink: 0 }}>
-                        {job.file_type}
+                        {(job.file_type || "").toUpperCase()}
                       </span>
                     </div>
                   </td>
@@ -416,6 +536,8 @@ function JobDetail({ jobId, onBack, onSendToAdvocate }) {
   const [expanded, setExpanded] = useState(null);
   const [exporting, setExporting] = useState(false);
   const [downloadingId, setDownloadingId] = useState(null);
+  const [selected, setSelected] = useState(new Set());
+  const [showConfirm, setShowConfirm] = useState(false);
   const pollRef = useRef(null);
 
   const fetchJob = useCallback(async () => {
@@ -442,6 +564,43 @@ function JobDetail({ jobId, onBack, onSendToAdvocate }) {
     }
     return () => clearInterval(pollRef.current);
   }, [data, fetchJob]);
+
+  const toggleSelect = (id) => {
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleAll = () => {
+    const emails = data?.emails || [];
+    if (selected.size === emails.length) setSelected(new Set());
+    else setSelected(new Set(emails.map(e => e.id)));
+  };
+
+  const handleBulkSend = () => {
+    setShowConfirm(true);
+  };
+
+  const confirmBulkSend = () => {
+    setShowConfirm(false);
+    const emails = (data?.emails || []).filter(e => selected.has(e.id));
+    if (!emails.length || !onSendToAdvocate) return;
+
+    if (emails.length === 1) {
+      const em = emails[0];
+      const content = `From: ${em.sender}\nTo: ${em.recipients || ""}\nDate: ${em.email_date ? new Date(em.email_date).toLocaleDateString("en-CA") : "N/A"}\n\n${em.body_text || ""}`;
+      onSendToAdvocate(content, em.subject);
+    } else {
+      // Combine into one analysis request
+      const combined = emails.map((em, i) => (
+        `--- EMAIL ${i + 1} ---\nSubject: ${em.subject}\nFrom: ${em.sender}\nDate: ${em.email_date ? new Date(em.email_date).toLocaleDateString("en-CA") : "N/A"}\n\n${em.body_text || ""}`
+      )).join("\n\n");
+      onSendToAdvocate(combined, `${emails.length} emails selected for analysis`);
+    }
+    setSelected(new Set());
+  };
 
   const handleExport = async () => {
     setExporting(true);
@@ -488,16 +647,25 @@ function JobDetail({ jobId, onBack, onSendToAdvocate }) {
 
   const { job, emails } = data;
   const isComplete = job.status === "completed";
+  const allSelected = emails?.length > 0 && selected.size === emails.length;
 
   return (
     <div>
+      {showConfirm && (
+        <ConfirmModal
+          count={selected.size}
+          onConfirm={confirmBulkSend}
+          onCancel={() => setShowConfirm(false)}
+        />
+      )}
+
       {/* Back + Meta */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
         <TBtn variant="ghost" onClick={onBack}>
           <ArrowLeft size={14} /> BACK_TO_QUEUE
         </TBtn>
         <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: "10px", color: "#A1A1AA" }}>
-          UUID: {job.id?.slice(-8)} // TYPE: {job.file_type?.toUpperCase()}
+          UUID: {job.id?.slice(-8)} // TYPE: {(job.file_type || "").toUpperCase()}
         </span>
       </div>
 
@@ -519,7 +687,7 @@ function JobDetail({ jobId, onBack, onSendToAdvocate }) {
           <TBtn
             variant="accent"
             onClick={handleExport}
-            disabled={!isComplete || exporting || emails?.length === 0}
+            disabled={!isComplete || exporting || !emails?.length}
             testId="export-zip-button"
           >
             {exporting
@@ -534,6 +702,49 @@ function JobDetail({ jobId, onBack, onSendToAdvocate }) {
           </div>
         )}
       </TWindow>
+
+      {/* Multi-select toolbar */}
+      {emails?.length > 0 && (
+        <div style={{
+          display: "flex", alignItems: "center", gap: "10px", marginBottom: "12px",
+          padding: "10px 14px",
+          background: selected.size > 0 ? "rgba(168,85,247,0.08)" : "rgba(0,255,212,0.03)",
+          border: `1px solid ${selected.size > 0 ? "rgba(168,85,247,0.3)" : "rgba(0,255,212,0.15)"}`,
+          transition: "all 0.2s",
+        }}>
+          <button
+            onClick={toggleAll}
+            data-testid="select-all-toggle"
+            style={{ background: "none", border: "none", cursor: "pointer", color: "#00FFD4", display: "flex", alignItems: "center", gap: "6px", padding: 0 }}
+          >
+            {allSelected
+              ? <CheckSquare size={16} style={{ color: "#00FFD4" }} />
+              : <Square size={16} style={{ color: "rgba(0,255,212,0.5)" }} />
+            }
+            <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: "10px", letterSpacing: "0.1em" }}>
+              {allSelected ? "DESELECT_ALL" : "SELECT_ALL"}
+            </span>
+          </button>
+
+          <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: "10px", color: "#A1A1AA", marginLeft: "4px" }}>
+            {selected.size} / {emails.length} SELECTED
+          </span>
+
+          <div style={{ flex: 1 }} />
+
+          {selected.size > 0 && (
+            <TBtn
+              variant="accent"
+              onClick={handleBulkSend}
+              testId="bulk-send-advocate"
+              disabled={!onSendToAdvocate}
+            >
+              <Zap size={12} />
+              SEND {selected.size} TO ADVOCATE
+            </TBtn>
+          )}
+        </div>
+      )}
 
       {/* Emails List */}
       <div>
@@ -553,25 +764,34 @@ function JobDetail({ jobId, onBack, onSendToAdvocate }) {
           <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
             {emails.map(em => {
               const isExp = expanded === em.id;
+              const isSel = selected.has(em.id);
               return (
                 <div
                   key={em.id}
                   data-testid={`email-row-${em.id}`}
                   style={{
-                    border: `1px solid ${isExp ? "rgba(0,255,212,0.5)" : "rgba(0,255,212,0.15)"}`,
-                    background: "#030305",
+                    border: `1px solid ${isSel ? "rgba(168,85,247,0.6)" : isExp ? "rgba(0,255,212,0.5)" : "rgba(0,255,212,0.15)"}`,
+                    background: isSel ? "rgba(168,85,247,0.04)" : "#030305",
                     boxShadow: isExp ? "0 0 12px rgba(0,255,212,0.08)" : "none",
                     transition: "all 0.2s",
                   }}
                 >
                   {/* Header Row */}
-                  <div
-                    style={{ padding: "12px 14px", display: "flex", gap: "12px", cursor: "pointer", alignItems: "flex-start" }}
-                    onClick={() => setExpanded(isExp ? null : em.id)}
-                    onMouseEnter={e => e.currentTarget.style.background = "rgba(0,255,212,0.03)"}
-                    onMouseLeave={e => e.currentTarget.style.background = "transparent"}
-                  >
-                    <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ padding: "12px 14px", display: "flex", gap: "10px", alignItems: "flex-start" }}>
+                    {/* Checkbox */}
+                    <button
+                      onClick={() => toggleSelect(em.id)}
+                      data-testid={`select-email-${em.id}`}
+                      style={{ background: "none", border: "none", cursor: "pointer", color: isSel ? "#A855F7" : "rgba(0,255,212,0.4)", padding: "2px 0", flexShrink: 0, marginTop: "2px" }}
+                    >
+                      {isSel ? <CheckSquare size={15} /> : <Square size={15} />}
+                    </button>
+
+                    {/* Content — clickable to expand */}
+                    <div
+                      style={{ flex: 1, minWidth: 0, cursor: "pointer" }}
+                      onClick={() => setExpanded(isExp ? null : em.id)}
+                    >
                       <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "4px", flexWrap: "wrap" }}>
                         <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: "10px", color: "#A855F7", border: "1px solid rgba(168,85,247,0.3)", padding: "1px 6px", background: "rgba(168,85,247,0.05)", maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                           {em.generated_filename}
@@ -592,34 +812,38 @@ function JobDetail({ jobId, onBack, onSendToAdvocate }) {
                         )}
                       </div>
                     </div>
-                    <TBtn
-                      variant="outline"
-                      style={{ padding: "4px 10px", flexShrink: 0 }}
-                      testId={`download-txt-${em.id}`}
-                      onClick={e => { e.stopPropagation(); handleDownloadTxt(em.id, em.generated_filename); }}
-                      disabled={downloadingId === em.id}
-                    >
-                      {downloadingId === em.id
-                        ? <Loader2 size={11} style={{ animation: "spin 1s linear infinite" }} />
-                        : <Download size={11} />
-                      }
-                      TXT
-                    </TBtn>
-                    {onSendToAdvocate && (
+
+                    {/* Actions */}
+                    <div style={{ display: "flex", gap: "6px", flexShrink: 0 }}>
                       <TBtn
-                        variant="accent"
-                        style={{ padding: "4px 10px", flexShrink: 0 }}
-                        testId={`send-to-advocate-${em.id}`}
-                        onClick={e => {
-                          e.stopPropagation();
-                          const content = `From: ${em.sender}\nTo: ${em.recipients || ""}\nDate: ${em.email_date ? new Date(em.email_date).toLocaleDateString("en-CA") : "N/A"}\n\n${em.body_text || ""}`;
-                          onSendToAdvocate(content, em.subject);
-                        }}
+                        variant="outline"
+                        style={{ padding: "4px 10px" }}
+                        testId={`download-txt-${em.id}`}
+                        onClick={e => { e.stopPropagation(); handleDownloadTxt(em.id, em.generated_filename); }}
+                        disabled={downloadingId === em.id}
                       >
-                        <Zap size={11} />
-                        ADVOCATE
+                        {downloadingId === em.id
+                          ? <Loader2 size={11} style={{ animation: "spin 1s linear infinite" }} />
+                          : <Download size={11} />
+                        }
+                        TXT
                       </TBtn>
-                    )}
+                      {onSendToAdvocate && (
+                        <TBtn
+                          variant="accent"
+                          style={{ padding: "4px 10px" }}
+                          testId={`send-to-advocate-${em.id}`}
+                          onClick={e => {
+                            e.stopPropagation();
+                            const content = `From: ${em.sender}\nTo: ${em.recipients || ""}\nDate: ${em.email_date ? new Date(em.email_date).toLocaleDateString("en-CA") : "N/A"}\n\n${em.body_text || ""}`;
+                            onSendToAdvocate(content, em.subject);
+                          }}
+                        >
+                          <Zap size={11} />
+                          SEND
+                        </TBtn>
+                      )}
+                    </div>
                   </div>
 
                   {/* Expanded Detail */}
@@ -643,7 +867,7 @@ function JobDetail({ jobId, onBack, onSendToAdvocate }) {
                       </div>
                       <div>
                         <p style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: "10px", color: "rgba(0,255,212,0.5)", marginBottom: "6px", display: "flex", alignItems: "center", gap: "4px" }}>
-                          <AlignLeft size={10} /> PARSED_PAYLOAD:
+                          <AlignLeft size={10} /> PARSED_PAYLOAD (signatures & quotes stripped):
                         </p>
                         <pre style={{
                           background: "#030305", border: "1px solid rgba(0,255,212,0.2)",
@@ -702,7 +926,7 @@ function triggerAutoDownload(jobId, filename) {
 export default function EmailConverter({ onSendToAdvocate }) {
   const [view, setView] = useState("jobs"); // "jobs" | "detail"
   const [selectedJobId, setSelectedJobId] = useState(null);
-  const [jobsKey, setJobsKey] = useState(0); // force re-fetch after upload
+  const [jobsKey, setJobsKey] = useState(0);
 
   const handleViewJob = (job) => {
     setSelectedJobId(job.id);
@@ -718,18 +942,15 @@ export default function EmailConverter({ onSendToAdvocate }) {
       }}
     >
       {/* Page Header */}
-      <div style={{ marginBottom: "24px", display: "flex", alignItems: "center", gap: "14px" }}>
-        <div>
-          <h1 style={{ fontFamily: "'Unbounded', sans-serif", fontSize: "22px", fontWeight: "900", color: "#00FFD4", letterSpacing: "-0.02em", lineHeight: "1.2" }}>
-            EMAIL_CONVERTER
-          </h1>
-          <p style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: "10px", color: "rgba(0,255,212,0.5)", marginTop: "2px", letterSpacing: "0.15em" }}>
-            .EML / .MBOX → STRUCTURED TEXT // ATTACHMENT INDEXING // ZIP EXPORT
-          </p>
-        </div>
+      <div style={{ marginBottom: "24px" }}>
+        <h1 style={{ fontFamily: "'Unbounded', sans-serif", fontSize: "22px", fontWeight: "900", color: "#00FFD4", letterSpacing: "-0.02em", lineHeight: "1.2" }}>
+          EMAIL_CONVERTER
+        </h1>
+        <p style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: "10px", color: "rgba(0,255,212,0.5)", marginTop: "2px", letterSpacing: "0.15em" }}>
+          .EML / .MBOX / .PDF / .TXT / .HTML / .MSG → STRUCTURED JSON // MULTI-SELECT // ZIP EXPORT
+        </p>
       </div>
 
-      {/* Inline CSS for spin animation */}
       <style>{`
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
       `}</style>

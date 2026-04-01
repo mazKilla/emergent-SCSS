@@ -341,7 +341,7 @@ async def call_claude(session_id: str, user_message: str, extra_context: str = "
         api_key=EMERGENT_LLM_KEY,
         session_id=request_session_id,
         system_message=ALBERTA_SYSTEM_PROMPT + history_context + extra_context,
-    ).with_model("anthropic", "claude-sonnet-4-5-20250929")
+    ).with_model("anthropic", "claude-sonnet-4-6")
 
     resp = await chat.send_message(UserMessage(text=user_message))
     return resp
@@ -418,7 +418,7 @@ async def debug_health():
     checks["claude"] = {
         "status": "ok" if EMERGENT_LLM_KEY else "missing_key",
         "key_prefix": EMERGENT_LLM_KEY[:12] + "..." if EMERGENT_LLM_KEY else None,
-        "model": "claude-sonnet-4-5-20250929",
+        "model": "claude-sonnet-4-6",
     }
 
     # ── Grok (xAI) — live ping ──
@@ -784,7 +784,7 @@ async def get_policy_resources():
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# EMAIL CONVERTER — .EML / .MBOX → TEXT (mirrors original repo schema)
+# EMAIL CONVERTER — .EML / .MBOX / .PDF / .TXT → STRUCTURED JSON
 # ═══════════════════════════════════════════════════════════════════════
 import email as _email_lib
 import mailbox as _mailbox_lib
@@ -796,11 +796,14 @@ from email.header import decode_header as _decode_header
 import email.utils as _email_utils
 from fastapi import UploadFile, File, BackgroundTasks
 from fastapi.responses import StreamingResponse
+from typing import List as TypingList
 
 # MongoDB collections for email converter (mirrors original PostgreSQL schema)
 ec_jobs_col = db["ec_conversion_jobs"]
 ec_emails_col = db["ec_converted_emails"]
 ec_attachments_col = db["ec_email_attachments"]
+
+SUPPORTED_EXTENSIONS = {"eml", "mbox", "pdf", "txt", "text", "html", "htm", "msg"}
 
 
 # ── Filename generator (matches TypeScript format: YYYY/DD/MM:HH:MM - sender_subject) ──
@@ -848,6 +851,91 @@ def _extract_text_from_html(html_str: str) -> str:
         return soup.get_text(separator="\n", strip=True)
     except Exception:
         return re.sub(r'<[^>]+>', '', html_str)
+
+
+def _strip_signatures_and_quotes(text: str) -> str:
+    """Remove quoted replies, email signatures, and common boilerplate noise."""
+    if not text:
+        return text
+    lines = text.splitlines()
+    clean_lines = []
+    # Signatures typically follow a line that is exactly "-- " or "___" or similar
+    sig_patterns = re.compile(
+        r'^(--|_{3,}|-{3,}|Sent from .+|Get Outlook for|This email (was sent|is confidential)|'
+        r'CONFIDENTIAL|DISCLAIMER|Please consider the environment|On .+ wrote:|>'
+        r'|\[cid:|-----Original Message-----).*$',
+        re.IGNORECASE
+    )
+    in_signature = False
+    for line in lines:
+        stripped = line.strip()
+        # Quoted-reply marker — stop collecting
+        if stripped.startswith(">") or sig_patterns.match(stripped):
+            in_signature = True
+        if not in_signature:
+            clean_lines.append(line)
+    result = "\n".join(clean_lines).strip()
+    # Collapse excessive blank lines
+    result = re.sub(r'\n{3,}', '\n\n', result)
+    return result
+
+
+def _extract_pdf_text(file_bytes: bytes) -> str:
+    """Extract text from a PDF using pdfplumber."""
+    try:
+        import pdfplumber
+        pages = []
+        with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
+            for page in pdf.pages:
+                t = page.extract_text()
+                if t:
+                    pages.append(t)
+        return "\n\n".join(pages).strip() or "<EMPTY PDF>"
+    except Exception as e:
+        return f"<PDF EXTRACTION ERROR: {e}>"
+
+
+def _parse_pdf_as_doc(filename: str, file_bytes: bytes) -> dict:
+    """Parse a PDF file into the same structured dict as email records."""
+    body_text = _extract_pdf_text(file_bytes)
+    name_no_ext = re.sub(r'\.[^.]+$', '', filename)
+    now = datetime.now(timezone.utc)
+    return {
+        "generated_filename": f"{now.year}/{str(now.day).zfill(2)}/{str(now.month).zfill(2)}:{str(now.hour).zfill(2)}:{str(now.minute).zfill(2)} - document_{_sanitize_filename(name_no_ext)}",
+        "subject": name_no_ext,
+        "sender": "Document",
+        "recipients": "",
+        "email_date": now,
+        "body_text": body_text,
+        "has_attachments": False,
+        "attachment_count": 0,
+        "attachment_names": None,
+        "attachments": [],
+        "file_type": "pdf",
+    }
+
+
+def _parse_txt_as_doc(filename: str, file_bytes: bytes) -> dict:
+    """Parse a plain-text file into the same structured dict."""
+    try:
+        body_text = file_bytes.decode("utf-8", errors="replace").strip() or "<EMPTY FILE>"
+    except Exception:
+        body_text = "<DECODE ERROR>"
+    name_no_ext = re.sub(r'\.[^.]+$', '', filename)
+    now = datetime.now(timezone.utc)
+    return {
+        "generated_filename": f"{now.year}/{str(now.day).zfill(2)}/{str(now.month).zfill(2)}:{str(now.hour).zfill(2)}:{str(now.minute).zfill(2)} - document_{_sanitize_filename(name_no_ext)}",
+        "subject": name_no_ext,
+        "sender": "Document",
+        "recipients": "",
+        "email_date": now,
+        "body_text": body_text,
+        "has_attachments": False,
+        "attachment_count": 0,
+        "attachment_names": None,
+        "attachments": [],
+        "file_type": "txt",
+    }
 
 
 def _parse_single_email(msg) -> dict:
@@ -922,8 +1010,24 @@ def _parse_single_email(msg) -> dict:
     if not body_text and body_html:
         body_text = _extract_text_from_html(body_html)
 
+    # Strip signatures and quoted replies for clean embeddings
+    clean_body = _strip_signatures_and_quotes(body_text)
+
     att_names = ", ".join(a["filename"] for a in attachments) if attachments else None
     generated_filename = _generate_email_filename(email_date, sender, subject)
+
+    # Structured JSON for embeddings
+    structured_json = {
+        "subject": subject or "<NO SUBJECT>",
+        "sender": sender or "<UNKNOWN>",
+        "recipients": recipients or "",
+        "date": email_date.isoformat() if email_date else None,
+        "clean_body": clean_body,
+        "body_word_count": len(clean_body.split()) if clean_body else 0,
+        "has_attachments": len(attachments) > 0,
+        "attachment_count": len(attachments),
+        "attachments": [{"filename": a["filename"], "content_type": a["content_type"], "size": a["size"]} for a in attachments],
+    }
 
     return {
         "generated_filename": generated_filename,
@@ -931,7 +1035,8 @@ def _parse_single_email(msg) -> dict:
         "sender": sender or "<UNKNOWN>",
         "recipients": recipients or "",
         "email_date": email_date,
-        "body_text": body_text.strip() or "<EMPTY BODY>",
+        "body_text": clean_body.strip() or "<EMPTY BODY>",
+        "structured_json": structured_json,
         "has_attachments": len(attachments) > 0,
         "attachment_count": len(attachments),
         "attachment_names": att_names,
@@ -962,14 +1067,18 @@ def _build_txt_content(email_doc: dict) -> str:
     return "\n".join(lines)
 
 
-async def _process_job_background(job_id: str, file_bytes: bytes, file_type: str):
-    """Background task: parse emails and store in MongoDB."""
+async def _process_job_background(job_id: str, file_bytes: bytes, file_type: str, original_filename: str = ""):
+    """Background task: parse emails/documents and store in MongoDB."""
     oid = ObjectId(job_id)
     ec_jobs_col.update_one({"_id": oid}, {"$set": {"status": "processing", "updated_at": utcnow()}})
 
     try:
         parsed_emails = []
-        if file_type == "eml":
+        if file_type == "pdf":
+            parsed_emails = [_parse_pdf_as_doc(original_filename, file_bytes)]
+        elif file_type in ("txt", "text", "html", "htm"):
+            parsed_emails = [_parse_txt_as_doc(original_filename, file_bytes)]
+        elif file_type == "eml":
             msg = _email_lib.message_from_bytes(file_bytes, policy=_email_lib.policy.compat32)
             parsed_emails = [_parse_single_email(msg)]
         elif file_type == "mbox":
@@ -992,6 +1101,9 @@ async def _process_job_background(job_id: str, file_bytes: bytes, file_type: str
                         parsed_emails.append(parsed)
                 except Exception:
                     continue
+        else:
+            # Generic: try as text
+            parsed_emails = [_parse_txt_as_doc(original_filename, file_bytes)]
 
         total = len(parsed_emails)
         ec_jobs_col.update_one({"_id": oid}, {"$set": {"total_emails": total, "updated_at": utcnow()}})
@@ -1006,6 +1118,7 @@ async def _process_job_background(job_id: str, file_bytes: bytes, file_type: str
                 "recipients": ep["recipients"],
                 "email_date": ep["email_date"],
                 "body_text": ep["body_text"],
+                "structured_json": ep.get("structured_json"),
                 "has_attachments": ep["has_attachments"],
                 "attachment_count": ep["attachment_count"],
                 "attachment_names": ep["attachment_names"],
@@ -1046,9 +1159,14 @@ async def ec_upload(
     file: UploadFile = File(...),
 ):
     filename = file.filename or "unknown"
-    ext = filename.rsplit(".", 1)[-1].lower()
-    if ext not in ("eml", "mbox"):
-        raise HTTPException(status_code=400, detail="Only .eml and .mbox files are supported")
+    # Strip any path prefix (from folder uploads, browser sends relative paths)
+    filename = filename.replace("\\", "/").split("/")[-1]
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    if ext not in SUPPORTED_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type '.{ext}'. Supported: {', '.join(sorted(SUPPORTED_EXTENSIONS))}"
+        )
 
     file_bytes = await file.read()
 
@@ -1065,11 +1183,45 @@ async def ec_upload(
     result = ec_jobs_col.insert_one(job_doc)
     job_id = str(result.inserted_id)
 
-    background_tasks.add_task(_process_job_background, job_id, file_bytes, ext)
+    background_tasks.add_task(_process_job_background, job_id, file_bytes, ext, filename)
 
     job_doc["id"] = job_id
     job_doc.pop("_id", None)
     return job_doc
+
+
+@app.post("/api/ec/upload-batch")
+async def ec_upload_batch(
+    background_tasks: BackgroundTasks,
+    files: TypingList[UploadFile] = File(...),
+):
+    """Accept multiple files in one request (for folder uploads)."""
+    results = []
+    for file in files:
+        filename = file.filename or "unknown"
+        filename = filename.replace("\\", "/").split("/")[-1]
+        ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+        if ext not in SUPPORTED_EXTENSIONS:
+            results.append({"filename": filename, "skipped": True, "reason": f"Unsupported type .{ext}"})
+            continue
+        file_bytes = await file.read()
+        job_doc = {
+            "original_filename": filename,
+            "file_type": ext,
+            "status": "pending",
+            "total_emails": 0,
+            "processed_emails": 0,
+            "error_message": None,
+            "created_at": utcnow(),
+            "updated_at": utcnow(),
+        }
+        result = ec_jobs_col.insert_one(job_doc)
+        job_id = str(result.inserted_id)
+        background_tasks.add_task(_process_job_background, job_id, file_bytes, ext, filename)
+        job_doc["id"] = job_id
+        job_doc.pop("_id", None)
+        results.append({"filename": filename, "job": job_doc})
+    return {"results": results, "total_queued": sum(1 for r in results if not r.get("skipped"))}
 
 
 @app.get("/api/ec/jobs")

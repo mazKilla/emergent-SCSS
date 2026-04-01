@@ -7,8 +7,180 @@ import EmailConverter from "./components/EmailConverter";
 import DebugPanel from "./components/DebugPanel";
 
 const API = process.env.REACT_APP_BACKEND_URL;
+const GATE_KEY = "scss_gate_v1";
+
+// ── Security Gate ─────────────────────────────────────────────────────
+function SecurityGate({ onUnlock }) {
+  const [answer, setAnswer] = useState("");
+  const [error, setError] = useState(false);
+  const [shake, setShake] = useState(false);
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (answer.trim().toUpperCase() === "BENJI") {
+      sessionStorage.setItem(GATE_KEY, "1");
+      onUnlock();
+    } else {
+      setError(true);
+      setShake(true);
+      setTimeout(() => setShake(false), 500);
+      setAnswer("");
+    }
+  };
+
+  return (
+    <div style={{
+      position: "fixed", inset: 0,
+      background: "#030305",
+      display: "flex", alignItems: "center", justifyContent: "center",
+      zIndex: 9999,
+    }}>
+      <style>{`
+        @keyframes gateShake {
+          0%, 100% { transform: translateX(0); }
+          20%, 60% { transform: translateX(-8px); }
+          40%, 80% { transform: translateX(8px); }
+        }
+        @keyframes gatePulse {
+          0%, 100% { box-shadow: 0 0 20px rgba(0,255,212,0.2), 0 0 60px rgba(0,255,212,0.05); }
+          50% { box-shadow: 0 0 40px rgba(0,255,212,0.4), 0 0 80px rgba(0,255,212,0.1); }
+        }
+        @keyframes gateGlow {
+          0%, 100% { opacity: 0.5; }
+          50% { opacity: 1; }
+        }
+      `}</style>
+
+      <div style={{
+        border: "1px solid rgba(0,255,212,0.4)",
+        background: "rgba(3,3,5,0.98)",
+        padding: "48px 40px",
+        maxWidth: "440px",
+        width: "90%",
+        animation: shake ? "gateShake 0.5s ease" : "gatePulse 3s ease-in-out infinite",
+        textAlign: "center",
+      }}>
+        {/* Lock icon pulse */}
+        <div style={{
+          width: "64px", height: "64px",
+          border: "2px solid rgba(0,255,212,0.5)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          margin: "0 auto 24px",
+          background: "rgba(0,255,212,0.05)",
+          animation: "gateGlow 2s ease-in-out infinite",
+        }}>
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#00FFD4" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+            <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+          </svg>
+        </div>
+
+        <p style={{
+          fontFamily: "'JetBrains Mono', monospace",
+          fontSize: "10px",
+          color: "rgba(0,255,212,0.5)",
+          letterSpacing: "0.25em",
+          textTransform: "uppercase",
+          marginBottom: "8px",
+        }}>
+          SCSS AB ADVOCATE // ACCESS CONTROL
+        </p>
+
+        <h1 style={{
+          fontFamily: "'Unbounded', sans-serif",
+          fontSize: "28px",
+          fontWeight: "900",
+          color: "#00FFD4",
+          letterSpacing: "-0.02em",
+          marginBottom: "24px",
+          lineHeight: "1.1",
+        }}>
+          SYSTEM_LOCK
+        </h1>
+
+        <p style={{
+          fontFamily: "'JetBrains Mono', monospace",
+          fontSize: "14px",
+          color: "#F8F8F8",
+          marginBottom: "6px",
+          letterSpacing: "0.1em",
+        }}>
+          QUERY: <span style={{ color: "#A855F7", fontWeight: "bold" }}>PUG_BUD</span>
+        </p>
+        <p style={{
+          fontFamily: "'JetBrains Mono', monospace",
+          fontSize: "11px",
+          color: "rgba(0,255,212,0.4)",
+          marginBottom: "28px",
+        }}>
+          Enter access passphrase to continue
+        </p>
+
+        <form onSubmit={handleSubmit}>
+          <input
+            data-testid="gate-input"
+            type="password"
+            value={answer}
+            onChange={e => { setAnswer(e.target.value); setError(false); }}
+            placeholder="PASSPHRASE..."
+            autoFocus
+            style={{
+              width: "100%",
+              boxSizing: "border-box",
+              background: "rgba(0,255,212,0.05)",
+              border: `1px solid ${error ? "#EF4444" : "rgba(0,255,212,0.4)"}`,
+              color: "#F8F8F8",
+              fontFamily: "'JetBrains Mono', monospace",
+              fontSize: "16px",
+              padding: "12px 16px",
+              letterSpacing: "0.3em",
+              outline: "none",
+              marginBottom: "8px",
+              textAlign: "center",
+              textTransform: "uppercase",
+            }}
+          />
+          {error && (
+            <p data-testid="gate-error" style={{
+              fontFamily: "'JetBrains Mono', monospace",
+              fontSize: "11px",
+              color: "#EF4444",
+              marginBottom: "12px",
+              letterSpacing: "0.1em",
+            }}>
+              ACCESS_DENIED — INVALID PASSPHRASE
+            </p>
+          )}
+          <button
+            type="submit"
+            data-testid="gate-submit"
+            style={{
+              width: "100%",
+              background: "rgba(0,255,212,0.15)",
+              border: "1px solid rgba(0,255,212,0.5)",
+              color: "#00FFD4",
+              fontFamily: "'JetBrains Mono', monospace",
+              fontSize: "13px",
+              fontWeight: "bold",
+              padding: "12px",
+              cursor: "pointer",
+              letterSpacing: "0.2em",
+              textTransform: "uppercase",
+              transition: "all 0.2s",
+            }}
+            onMouseEnter={e => { e.target.style.background = "rgba(0,255,212,0.25)"; e.target.style.boxShadow = "0 0 16px rgba(0,255,212,0.2)"; }}
+            onMouseLeave={e => { e.target.style.background = "rgba(0,255,212,0.15)"; e.target.style.boxShadow = "none"; }}
+          >
+            AUTHENTICATE
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
 
 export default function App() {
+  const [unlocked, setUnlocked] = useState(() => !!sessionStorage.getItem(GATE_KEY));
   const [sessions, setSessions] = useState([]);
   const [activeSession, setActiveSession] = useState(null);
   const [messages, setMessages] = useState([]);
@@ -172,10 +344,12 @@ export default function App() {
   };
 
   return (
-    <div
-      className="flex flex-col h-screen w-screen overflow-hidden"
-      style={{ background: "#030305", color: "#F8F8F8" }}
-    >
+    <>
+      {!unlocked && <SecurityGate onUnlock={() => setUnlocked(true)} />}
+      <div
+        className="flex flex-col h-screen w-screen overflow-hidden"
+        style={{ background: "#030305", color: "#F8F8F8" }}
+      >
       <Header
         selectedModel={selectedModel}
         onModelChange={setSelectedModel}
@@ -236,5 +410,6 @@ export default function App() {
 
       {showDebug && <DebugPanel onClose={() => setShowDebug(false)} />}
     </div>
+    </>
   );
 }
