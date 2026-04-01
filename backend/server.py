@@ -498,7 +498,7 @@ async def get_models():
         "models": [
             {
                 "id": "claude",
-                "name": "Claude Sonnet 4.5",
+                "name": "Claude Sonnet 4.6",
                 "provider": "Anthropic",
                 "description": "Advanced reasoning & long context analysis",
                 "available": bool(EMERGENT_LLM_KEY),
