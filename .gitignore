@@ -59,11 +59,6 @@ frontend/.env
 !*.env.example
 !**/.env.example
 !.env.example
--e 
-# Environment files
-*.env
-*.env.*
--e 
 # Environment files
 *.env
 *.env.*
