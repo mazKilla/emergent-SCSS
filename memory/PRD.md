@@ -110,11 +110,10 @@ AI-powered Alberta social benefits adjudicator and appeal guidance platform. The
 - Backend: MONGO_URL, DB_NAME, EMERGENT_LLM_KEY, XAI_API_KEY
 - Frontend: REACT_APP_BACKEND_URL
 
-## Test Results (2026-04-02 iteration_4)
-- Backend: 100% (6/6 tests passed)
-- Frontend: 100% all bug fix flows verified
-- All 4 bug fixes confirmed working:
-  1. Drag-drop counter ref prevents child-element flicker
-  2. Send to Advocate → saves to /api/emails (Email References panel)  
-  3. AI chat always sees all email references in context
-  4. WIPE_DB button deletes all conversion history
+## Test Results (2026-04-02 iteration_5)
+- Backend: 100% (10/10)
+- Frontend: 100%
+- server.py refactored into 7 route modules + config.py
+- Alberta.ca policy crawler verified (crawls HTML + PDF)
+- Attachment button verified (chip shows, content prepended to message)
+- Claude 4.5 reverted (4.6 was broken — user confirmed)
