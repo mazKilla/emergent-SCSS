@@ -17,6 +17,7 @@ class EmailCreate(BaseModel):
     email_date: Optional[str] = None
     case_id: Optional[str] = None
     tags: Optional[List[str]] = None
+    attachments_summary: Optional[str] = None  # e.g. "file.pdf (12 KB), img.png (4 KB)"
 
 
 @router.get("/api/emails")
@@ -53,6 +54,7 @@ async def create_email(body: EmailCreate):
         "email_date": body.email_date or utcnow().isoformat(),
         "case_id": body.case_id,
         "tags": body.tags or [],
+        "attachments_summary": body.attachments_summary or "",
         "created_at": utcnow(),
     }
     result = emails_col.insert_one(doc)

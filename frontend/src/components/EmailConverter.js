@@ -642,20 +642,10 @@ function JobDetail({ jobId, onBack, onSendToAdvocate }) {
 
   const confirmBulkSend = () => {
     setShowConfirm(false);
-    const emails = (data?.emails || []).filter(e => selected.has(e.id));
-    if (!emails.length || !onSendToAdvocate) return;
-
-    if (emails.length === 1) {
-      const em = emails[0];
-      const content = `From: ${em.sender}\nTo: ${em.recipients || ""}\nDate: ${em.email_date ? new Date(em.email_date).toLocaleDateString("en-CA") : "N/A"}\n\n${em.body_text || ""}`;
-      onSendToAdvocate(content, em.subject);
-    } else {
-      // Combine into one analysis request
-      const combined = emails.map((em, i) => (
-        `--- EMAIL ${i + 1} ---\nSubject: ${em.subject}\nFrom: ${em.sender}\nDate: ${em.email_date ? new Date(em.email_date).toLocaleDateString("en-CA") : "N/A"}\n\n${em.body_text || ""}`
-      )).join("\n\n");
-      onSendToAdvocate(combined, `${emails.length} emails selected for analysis`);
-    }
+    const selectedEmails = (data?.emails || []).filter(e => selected.has(e.id));
+    if (!selectedEmails.length || !onSendToAdvocate) return;
+    // Save each email separately so AI has full untruncated content per email
+    selectedEmails.forEach(em => onSendToAdvocate(em));
     setSelected(new Set());
   };
 
@@ -892,8 +882,7 @@ function JobDetail({ jobId, onBack, onSendToAdvocate }) {
                           testId={`send-to-advocate-${em.id}`}
                           onClick={e => {
                             e.stopPropagation();
-                            const content = `From: ${em.sender}\nTo: ${em.recipients || ""}\nDate: ${em.email_date ? new Date(em.email_date).toLocaleDateString("en-CA") : "N/A"}\n\n${em.body_text || ""}`;
-                            onSendToAdvocate(content, em.subject);
+                            onSendToAdvocate(em);
                           }}
                         >
                           <Zap size={11} />
@@ -909,32 +898,25 @@ function JobDetail({ jobId, onBack, onSendToAdvocate }) {
                       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", marginBottom: "12px", paddingBottom: "12px", borderBottom: "1px solid rgba(0,255,212,0.1)", fontSize: "12px" }}>
                         <FieldBlock label="FROM:" value={em.sender} />
                         <FieldBlock label="TO:" value={em.recipients || "<UNDISCLOSED>"} />
+                        {em.structured_json?.body_word_count && (
+                          <FieldBlock label="WORDS:" value={`${em.structured_json.body_word_count.toLocaleString()} (after signature strip)`} />
+                        )}
                         {em.has_attachments && em.attachment_names && (
                           <div style={{ gridColumn: "1 / -1" }}>
                             <p style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: "10px", color: "rgba(0,255,212,0.5)", marginBottom: "4px", display: "flex", alignItems: "center", gap: "4px" }}>
-                              <Paperclip size={9} /> ATTACHMENTS_INDEX:
+                              <Paperclip size={9} /> ATTACHMENTS ({em.attachment_count}):
                             </p>
                             <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: "11px", padding: "8px", background: "rgba(0,255,212,0.04)", border: "1px solid rgba(0,255,212,0.1)", color: "#A1A1AA" }}>
                               {(em.attachment_names || "").split(",").map((n, i) => (
-                                <div key={i}>- {n.trim()}</div>
+                                <div key={i}>· {n.trim()}</div>
                               ))}
                             </div>
                           </div>
                         )}
                       </div>
-                      <div>
-                        <p style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: "10px", color: "rgba(0,255,212,0.5)", marginBottom: "6px", display: "flex", alignItems: "center", gap: "4px" }}>
-                          <AlignLeft size={10} /> PARSED_PAYLOAD (signatures & quotes stripped):
-                        </p>
-                        <pre style={{
-                          background: "#030305", border: "1px solid rgba(0,255,212,0.2)",
-                          padding: "12px", maxHeight: "320px", overflowY: "auto",
-                          fontFamily: "'JetBrains Mono', monospace", fontSize: "11px",
-                          color: "rgba(248,248,248,0.85)", whiteSpace: "pre-wrap", wordBreak: "break-word", lineHeight: "1.6",
-                        }}>
-                          {em.body_text || "<EMPTY_BODY>"}
-                        </pre>
-                      </div>
+
+                      {/* Tabs: BODY | JSON */}
+                      <DetailTabs emailId={em.id} bodyText={em.body_text} structuredJson={em.structured_json} />
                     </div>
                   )}
                 </div>
@@ -952,6 +934,66 @@ function FieldBlock({ label, value }) {
     <div>
       <p style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: "10px", color: "rgba(0,255,212,0.5)", marginBottom: "2px" }}>{label}</p>
       <p style={{ color: "#00FFD4", fontFamily: "'JetBrains Mono', monospace", fontSize: "11px", wordBreak: "break-all" }}>{value}</p>
+    </div>
+  );
+}
+
+function DetailTabs({ emailId, bodyText, structuredJson }) {
+  const [activeTab, setActiveTab] = useState("body");
+  const tabBtn = (id, label) => (
+    <button
+      onClick={() => setActiveTab(id)}
+      style={{
+        fontFamily: "'JetBrains Mono', monospace", fontSize: "10px", textTransform: "uppercase",
+        letterSpacing: "0.1em", padding: "3px 10px", border: "none", cursor: "pointer",
+        background: activeTab === id ? "rgba(0,255,212,0.12)" : "transparent",
+        borderBottom: activeTab === id ? "2px solid #00FFD4" : "2px solid transparent",
+        color: activeTab === id ? "#00FFD4" : "#A1A1AA",
+      }}
+    >{label}</button>
+  );
+
+  // Build a clean JSON for display — structured_json minus clean_body (shown in body tab)
+  const jsonDisplay = structuredJson
+    ? { ...structuredJson, clean_body: `[${(structuredJson.clean_body || "").split(" ").length} words — see BODY tab]` }
+    : null;
+
+  return (
+    <div>
+      <div style={{ display: "flex", borderBottom: "1px solid rgba(0,255,212,0.15)", marginBottom: "10px" }}>
+        {tabBtn("body", "Body")}
+        {tabBtn("json", "JSON")}
+      </div>
+      {activeTab === "body" && (
+        <>
+          <p style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: "10px", color: "rgba(0,255,212,0.4)", marginBottom: "6px", display: "flex", alignItems: "center", gap: "4px" }}>
+            <AlignLeft size={10} /> CLEAN_BODY (signatures & quoted replies stripped):
+          </p>
+          <pre style={{
+            background: "#030305", border: "1px solid rgba(0,255,212,0.2)",
+            padding: "12px", maxHeight: "320px", overflowY: "auto",
+            fontFamily: "'JetBrains Mono', monospace", fontSize: "11px",
+            color: "rgba(248,248,248,0.85)", whiteSpace: "pre-wrap", wordBreak: "break-word", lineHeight: "1.6",
+          }}>
+            {bodyText || "<EMPTY_BODY>"}
+          </pre>
+        </>
+      )}
+      {activeTab === "json" && (
+        <>
+          <p style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: "10px", color: "rgba(0,255,212,0.4)", marginBottom: "6px" }}>
+            STRUCTURED_JSON (stored in DB, sent to advocate):
+          </p>
+          <pre style={{
+            background: "#030305", border: "1px solid rgba(168,85,247,0.3)",
+            padding: "12px", maxHeight: "320px", overflowY: "auto",
+            fontFamily: "'JetBrains Mono', monospace", fontSize: "11px",
+            color: "#A855F7", whiteSpace: "pre-wrap", wordBreak: "break-word", lineHeight: "1.6",
+          }}>
+            {jsonDisplay ? JSON.stringify(jsonDisplay, null, 2) : "{ \"error\": \"structured_json not available\" }"}
+          </pre>
+        </>
+      )}
     </div>
   );
 }

@@ -394,26 +394,42 @@ export default function App() {
             )}
           </>
         ) : (
-          <EmailConverter onSendToAdvocate={async (content, subject) => {
-            // Save to email references (EmailPanel) — AI always has view of these
+          <EmailConverter onSendToAdvocate={async (emailObj) => {
+            // emailObj: { subject, sender, recipients, email_date, body_text, structured_json, has_attachments, attachment_count, attachment_names }
             try {
+              const sj = emailObj.structured_json || {};
+              // Build clean body: structured JSON fields + clean_body
+              const attachLine = emailObj.attachment_count
+                ? `\nAttachments (${emailObj.attachment_count}): ${emailObj.attachment_names || ""}`
+                : "";
+              const cleanBody = sj.clean_body || emailObj.body_text || "";
+              const body = `Subject: ${emailObj.subject}\nFrom: ${emailObj.sender}\nTo: ${emailObj.recipients || ""}${attachLine}\nWord Count: ${sj.body_word_count || cleanBody.split(" ").length}\n\n${cleanBody}`;
+
+              // Build attachment summary string for context
+              const attachments_summary = (sj.attachments || [])
+                .map(a => `${a.filename} (${a.content_type}, ${Math.round((a.size || 0) / 1024)} KB)`)
+                .join(", ");
+
               await fetch(`${API}/api/emails`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                  subject: subject || "Converted Email",
-                  sender: (() => { const m = content.match(/^From:\s*(.+)/m); return m ? m[1].trim() : "Unknown"; })(),
-                  recipients: (() => { const m = content.match(/^To:\s*(.+)/m); return m ? m[1].trim() : ""; })(),
-                  body: content,
-                  email_date: (() => { const m = content.match(/^Date:\s*(.+)/m); return m ? m[1].trim() : null; })(),
+                  subject: emailObj.subject || "Converted Email",
+                  sender: emailObj.sender || "Unknown",
+                  recipients: emailObj.recipients || "",
+                  body,
+                  email_date: emailObj.email_date
+                    ? (typeof emailObj.email_date === "string"
+                        ? emailObj.email_date
+                        : new Date(emailObj.email_date).toISOString())
+                    : null,
+                  attachments_summary,
                 }),
               });
-              // Reload email count
               fetch(`${API}/api/emails`).then(r => r.json()).then(d => setEmailCount(d.total || 0)).catch(() => {});
             } catch (e) {
-              console.error("Failed to save to email references", e);
+              console.error("Failed to save email reference", e);
             }
-            // Switch to chat tab and open email panel
             setActiveTab("chat");
             setShowEmailPanel(true);
           }} />

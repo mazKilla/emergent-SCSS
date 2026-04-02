@@ -47,17 +47,21 @@ async def chat(req: ChatRequest):
         search_results = web_search(f"Alberta ETW ALSS {req.message}", max_results=4)
         extra_context = build_search_context(search_results)
 
-    # Always include all saved email references
+    # Always include all saved email references — full structured content, capped per-ref
     all_refs = list(emails_col.find({}, sort=[("created_at", -1)]).limit(20))
     if all_refs:
         email_context = "\n\n[EMAIL REFERENCES — Saved documents the user has uploaded for this case]\n"
         for e in all_refs:
+            body = (e.get("body") or "")[:8000]  # generous — Claude handles long context
+            atts = e.get("attachments_summary", "")
+            att_line = f"\nAttachments: {atts}" if atts else ""
             email_context += (
                 f"\n--- REFERENCE: {e.get('subject', 'Untitled')} ---\n"
                 f"From: {e.get('sender','')}\n"
                 f"To: {e.get('recipients','')}\n"
                 f"Date: {e.get('email_date','')}\n"
-                f"{e.get('body','')[:1000]}\n"
+                f"{att_line}\n"
+                f"Body:\n{body}\n"
             )
         extra_context += email_context
 
@@ -69,7 +73,7 @@ async def chat(req: ChatRequest):
             policy_context += (
                 f"\n--- POLICY DOC: {pd.get('title', pd.get('url', 'Unknown'))} ---\n"
                 f"URL: {pd.get('url','')}\n"
-                f"{pd.get('content','')[:1500]}\n"
+                f"{pd.get('content','')[:5000]}\n"
             )
         extra_context += policy_context
 
