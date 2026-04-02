@@ -87,7 +87,7 @@ export default function ChatArea({ messages, isLoading, onSendMessage, activeSes
             >
               CASE: {activeSession.title || "Untitled"} |{" "}
               <span style={{ color: selectedModel === "grok" ? "rgba(168,85,247,0.7)" : "rgba(0,255,212,0.7)" }}>
-                {selectedModel === "grok" ? "GROK 3" : "CLAUDE SONNET 4.5"}
+                {selectedModel === "grok" ? "GROK 3" : "CLAUDE SONNET 4.6"}
               </span>
             </span>
           </div>
@@ -205,7 +205,7 @@ function WelcomeScreen({ onPromptClick, quickPrompts, selectedModel }) {
           >
             Active Model:{" "}
             <span style={{ color: selectedModel === "grok" ? "#A855F7" : "#00FFD4" }}>
-              {selectedModel === "grok" ? "Grok 3 (xAI)" : "Claude Sonnet 4.5 (Anthropic)"}
+              {selectedModel === "grok" ? "Grok 3 (xAI)" : "Claude Sonnet 4.6 (Anthropic)"}
             </span>
           </span>
         </div>
@@ -291,7 +291,7 @@ function ThinkingBubble({ model }) {
               textTransform: "uppercase",
             }}
           >
-            {model === "grok" ? "GROK 3" : "CLAUDE 4.5"}
+            {model === "grok" ? "GROK 3" : "CLAUDE 4.6"}
           </span>
         </div>
       </div>
