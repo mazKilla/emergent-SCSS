@@ -138,15 +138,15 @@ function ConfirmModal({ count, onConfirm, onCancel }) {
 // ── Upload Zone ──────────────────────────────────────────────────────
 function UploadZone({ onUploadDone }) {
   const [dragging, setDragging] = useState(false);
-  const [uploadQueue, setUploadQueue] = useState([]); // { file, status, error }
+  const [uploadQueue, setUploadQueue] = useState([]);
   const [isUploading, setIsUploading] = useState(false);
   const [globalError, setGlobalError] = useState(null);
   const fileInputRef = useRef(null);
   const folderInputRef = useRef(null);
+  const dragCounter = useRef(0); // prevents false onDragLeave fires on child elements
 
   const filterFiles = (fileList) => {
-    const arr = Array.from(fileList);
-    return arr.filter(f => {
+    return Array.from(fileList).filter(f => {
       const ext = f.name.split(".").pop().toLowerCase();
       return ACCEPTED_EXTS.includes(ext);
     });
@@ -183,14 +183,38 @@ function UploadZone({ onUploadDone }) {
 
     setIsUploading(false);
     onUploadDone();
-    // Clear queue after a short delay
     setTimeout(() => setUploadQueue([]), 3000);
   }, [onUploadDone]);
 
+  const onDragEnter = useCallback((e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounter.current++;
+    setDragging(true);
+  }, []);
+
+  const onDragOver = useCallback((e) => {
+    e.preventDefault();
+    e.stopPropagation();
+  }, []);
+
+  const onDragLeave = useCallback((e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounter.current--;
+    if (dragCounter.current === 0) setDragging(false);
+  }, []);
+
   const onDrop = useCallback((e) => {
     e.preventDefault();
+    e.stopPropagation();
+    dragCounter.current = 0;
     setDragging(false);
     const files = filterFiles(e.dataTransfer.files);
+    if (!files.length) {
+      setGlobalError("No supported files in drop. Accepted: " + ACCEPTED_EXTS.join(", "));
+      return;
+    }
     uploadFiles(files);
   }, [uploadFiles]);
 
@@ -216,8 +240,9 @@ function UploadZone({ onUploadDone }) {
       {/* Drag-drop zone */}
       <div
         data-testid="upload-dropzone"
-        onDragOver={e => { e.preventDefault(); setDragging(true); }}
-        onDragLeave={() => setDragging(false)}
+        onDragEnter={onDragEnter}
+        onDragOver={onDragOver}
+        onDragLeave={onDragLeave}
         onDrop={onDrop}
         style={{
           border: `2px dashed ${dragging ? "#00FFD4" : "rgba(0,255,212,0.3)"}`,
@@ -230,6 +255,7 @@ function UploadZone({ onUploadDone }) {
           transition: "all 0.3s",
           position: "relative",
           overflow: "hidden",
+          userSelect: "none",
         }}
       >
         {/* Hidden inputs */}
@@ -380,6 +406,7 @@ function JobsTable({ onViewJob }) {
   const [page, setPage] = useState(0);
   const [loading, setLoading] = useState(true);
   const [fetching, setFetching] = useState(false);
+  const [wiping, setWiping] = useState(false);
   const limit = 10;
   const prevStatuses = useRef({});
   const pollRef = useRef(null);
@@ -427,6 +454,20 @@ function JobsTable({ onViewJob }) {
     fetchJobs();
   };
 
+  const wipeAll = async () => {
+    if (!window.confirm(`WIPE ALL conversion history? This permanently deletes all jobs, parsed emails, and attachments. This cannot be undone.`)) return;
+    setWiping(true);
+    try {
+      await fetch(`${API}/api/ec/wipe`, { method: "DELETE" });
+      setPage(0);
+      fetchJobs();
+    } catch (e) {
+      alert("Wipe failed: " + e.message);
+    } finally {
+      setWiping(false);
+    }
+  };
+
   const thStyle = { padding: "8px 14px", fontFamily: "'JetBrains Mono', monospace", fontSize: "10px", color: "#00FFD4", textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: "normal", borderBottom: "1px solid rgba(0,255,212,0.2)", textAlign: "left", background: "rgba(0,255,212,0.05)" };
   const tdStyle = { padding: "12px 14px", borderBottom: "1px solid rgba(255,255,255,0.05)", verticalAlign: "middle" };
 
@@ -439,10 +480,26 @@ function JobsTable({ onViewJob }) {
           </span>
           {fetching && <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: "10px", color: "rgba(0,255,212,0.5)" }}>fetching updates...</span>}
         </div>
-        <TBtn variant="outline" onClick={() => fetchJobs(true)} style={{ padding: "4px 10px" }}>
-          <RefreshCw size={11} style={{ animation: fetching ? "spin 1s linear infinite" : "none" }} />
-          SYNC
-        </TBtn>
+        <div style={{ display: "flex", gap: "8px" }}>
+          <TBtn variant="outline" onClick={() => fetchJobs(true)} style={{ padding: "4px 10px" }}>
+            <RefreshCw size={11} style={{ animation: fetching ? "spin 1s linear infinite" : "none" }} />
+            SYNC
+          </TBtn>
+          {jobs.length > 0 && (
+            <TBtn
+              variant="destructive"
+              onClick={wipeAll}
+              disabled={wiping}
+              style={{ padding: "4px 10px" }}
+              testId="wipe-database-btn"
+            >
+              {wiping
+                ? <><Loader2 size={11} style={{ animation: "spin 1s linear infinite" }} /> WIPING...</>
+                : <><Trash2 size={11} /> WIPE_DB</>
+              }
+            </TBtn>
+          )}
+        </div>
       </div>
 
       {loading ? (

@@ -394,16 +394,28 @@ export default function App() {
             )}
           </>
         ) : (
-          <EmailConverter onSendToAdvocate={(content, subject) => {
+          <EmailConverter onSendToAdvocate={async (content, subject) => {
+            // Save to email references (EmailPanel) — AI always has view of these
+            try {
+              await fetch(`${API}/api/emails`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  subject: subject || "Converted Email",
+                  sender: (() => { const m = content.match(/^From:\s*(.+)/m); return m ? m[1].trim() : "Unknown"; })(),
+                  recipients: (() => { const m = content.match(/^To:\s*(.+)/m); return m ? m[1].trim() : ""; })(),
+                  body: content,
+                  email_date: (() => { const m = content.match(/^Date:\s*(.+)/m); return m ? m[1].trim() : null; })(),
+                }),
+              });
+              // Reload email count
+              fetch(`${API}/api/emails`).then(r => r.json()).then(d => setEmailCount(d.total || 0)).catch(() => {});
+            } catch (e) {
+              console.error("Failed to save to email references", e);
+            }
+            // Switch to chat tab and open email panel
             setActiveTab("chat");
-            setTimeout(() => {
-              sendMessage(
-                `[SEND TO ADVOCATE — Email Analysis Request]\n\nSubject: ${subject}\n\n` +
-                `Please analyze this email correspondence for ETW/ALSS appeal relevance. ` +
-                `Identify any policy violations, missed obligations, rights implications, ` +
-                `and the strongest advocacy position for the recipient:\n\n---\n${content}`
-              );
-            }, 150);
+            setShowEmailPanel(true);
           }} />
         )}
       </div>

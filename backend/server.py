@@ -587,15 +587,19 @@ async def chat(req: ChatRequest):
         search_results = web_search(search_query, max_results=4)
         extra_context = build_search_context(search_results)
 
-    # Check for relevant emails in DB
+    # Always include ALL email references saved in the database
     email_context = ""
-    session_title = session.get("title", "")
-    if session.get("case_id"):
-        emails = list(emails_col.find({"case_id": session["case_id"]}).limit(3))
-        if emails:
-            email_context = "\n\n[EMAIL REFERENCES FOR THIS CASE]\n"
-            for e in emails:
-                email_context += f"\nFrom: {e.get('sender','')}\nTo: {e.get('recipients','')}\nSubject: {e.get('subject','')}\nDate: {e.get('email_date','')}\n---\n{e.get('body','')[:800]}\n"
+    all_refs = list(emails_col.find({}, sort=[("created_at", -1)]).limit(20))
+    if all_refs:
+        email_context = "\n\n[EMAIL REFERENCES — Saved documents the user has uploaded for this case]\n"
+        for e in all_refs:
+            email_context += (
+                f"\n--- REFERENCE: {e.get('subject', 'Untitled')} ---\n"
+                f"From: {e.get('sender','')}\n"
+                f"To: {e.get('recipients','')}\n"
+                f"Date: {e.get('email_date','')}\n"
+                f"{e.get('body','')[:1000]}\n"
+            )
 
     full_extra = extra_context + email_context
 
@@ -1260,6 +1264,15 @@ async def ec_delete_job(job_id: str):
     ec_emails_col.delete_many({"job_id": job_id})
     ec_jobs_col.delete_one({"_id": oid})
     return {"success": True}
+
+
+@app.delete("/api/ec/wipe")
+async def ec_wipe_all():
+    """Wipe all conversion jobs, emails, and attachments from the database."""
+    ec_attachments_col.delete_many({})
+    ec_emails_col.delete_many({})
+    result = ec_jobs_col.delete_many({})
+    return {"success": True, "deleted_jobs": result.deleted_count}
 
 
 @app.get("/api/ec/emails/{email_id}/download")
