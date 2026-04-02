@@ -29,7 +29,7 @@
   "seed_data_creation": "Test emails created during testing then cleaned up. Some email refs remain in DB from manual send testing (4 refs total after tests).",
   "retest_needed": false,
   "should_main_agent_self_test": false,
-  "context_for_next_testing_agent": "All 3 fixes verified: (1) body uses [:8000] in chat.py — confirmed in code and backend; (2) onSendToAdvocate in App.js calls POST /api/emails once per email with structured body + attachments_summary — verified 2 separate emails saved on bulk send; (3) DetailTabs component shows BODY|JSON tabs in job detail view — confirmed working with attachment_count and attachments[] in JSON. WIPE_DB button visible in EC jobs table. Policy Docs tab visible in EmailPanel. App at https://seniors-advocate-ai.preview.emergentagent.com, gate: BENJI.",
+  "context_for_next_testing_agent": "All 3 fixes verified: (1) body uses [:8000] in chat.py — confirmed in code and backend; (2) onSendToAdvocate in App.js calls POST /api/emails once per email with structured body + attachments_summary — verified 2 separate emails saved on bulk send; (3) DetailTabs component shows BODY|JSON tabs in job detail view — confirmed working with attachment_count and attachments[] in JSON. WIPE_DB button visible in EC jobs table. Policy Docs tab visible in EmailPanel. App at https://neon-advocate.preview.emergentagent.com, gate: BENJI.",
   "verified_features": {
     "security_gate_BENJI": "PASS",
     "ec_page_loads": "PASS",

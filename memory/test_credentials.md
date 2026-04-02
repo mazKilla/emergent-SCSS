@@ -17,8 +17,8 @@ No authentication required — app is open access.
 - Collections: chat_sessions, chat_messages, email_references
 
 ### App URLs
-- Frontend: https://87dad054-b36d-41d3-a2e9-9ba89fa9b3c7.preview.emergentagent.com
-- Backend API: https://87dad054-b36d-41d3-a2e9-9ba89fa9b3c7.preview.emergentagent.com/api
+- Frontend: https://neon-advocate.preview.emergentagent.com
+- Backend API: https://neon-advocate.preview.emergentagent.com/api
 
 ### Test Data
 - A test email "ETW Denial Notice - Test" may exist in MongoDB email_references collection from testing
