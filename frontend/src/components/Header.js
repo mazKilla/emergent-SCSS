@@ -53,7 +53,7 @@ export default function Header({ selectedModel, onModelChange, showEmailPanel, o
             border: "1px solid rgba(255,255,255,0.1)",
           }}
         >
-          <ModelBtn id={CLAUDE_ID} label="Claude Sonnet 4.6" selected={selectedModel === CLAUDE_ID} onClick={() => onModelChange(CLAUDE_ID)} />
+          <ModelBtn id={CLAUDE_ID} label="Claude Sonnet 4.5" selected={selectedModel === CLAUDE_ID} onClick={() => onModelChange(CLAUDE_ID)} />
           <ModelBtn id={GROK_ID} label="Grok 3" selected={selectedModel === GROK_ID} onClick={() => onModelChange(GROK_ID)} />
         </div>
 
