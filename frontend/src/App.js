@@ -309,11 +309,30 @@ export default function App() {
       });
 
       if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.detail || "API error");
+        // Safely parse error — response may be HTML (proxy timeout) not JSON
+        let errDetail = `Server error (${res.status})`;
+        try {
+          const ct = res.headers.get("content-type") || "";
+          if (ct.includes("application/json")) {
+            const errData = await res.json();
+            errDetail = errData.detail || errDetail;
+          } else {
+            const txt = await res.text();
+            // Extract a meaningful snippet, not raw HTML
+            const clean = txt.replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
+            errDetail = `Server error (${res.status}): ${clean.slice(0, 120)}`;
+          }
+        } catch (_) { /* keep default errDetail */ }
+        throw new Error(errDetail);
       }
 
-      const data = await res.json();
+      // Safely parse success response
+      let data;
+      try {
+        data = await res.json();
+      } catch (_) {
+        throw new Error("Received invalid response from server. Please try again.");
+      }
 
       // Add AI response
       const aiMsg = {
