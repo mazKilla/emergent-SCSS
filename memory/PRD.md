@@ -110,10 +110,8 @@ AI-powered Alberta social benefits adjudicator and appeal guidance platform. The
 - Backend: MONGO_URL, DB_NAME, EMERGENT_LLM_KEY, XAI_API_KEY
 - Frontend: REACT_APP_BACKEND_URL
 
-## Test Results (2026-04-02 iteration_5)
-- Backend: 100% (10/10)
-- Frontend: 100%
-- server.py refactored into 7 route modules + config.py
-- Alberta.ca policy crawler verified (crawls HTML + PDF)
-- Attachment button verified (chip shows, content prepended to message)
-- Claude 4.5 reverted (4.6 was broken — user confirmed)
+## Test Results (2026-04-02 iteration_6)
+- Backend: 100% (8/8), Frontend: 100%
+- Email body truncation fixed: [:8000] per ref (was [:1000])
+- Send to Advocate: each email saved separately with structured body + attachments_summary
+- EC detail view: BODY | JSON tab switcher showing structured_json with attachment array
