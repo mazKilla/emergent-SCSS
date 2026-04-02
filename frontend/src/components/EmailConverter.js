@@ -535,10 +535,10 @@ function JobsTable({ onViewJob }) {
                       #{(job.id || "").slice(-6).toUpperCase()}
                     </span>
                   </td>
-                  <td style={tdStyle}>
+                  <td style={{ ...tdStyle, minWidth: "280px" }}>
                     <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                       {getFileIcon(job.original_filename)}
-                      <span style={{ fontWeight: "bold", color: "#00FFD4", maxWidth: "180px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontFamily: "'JetBrains Mono', monospace", fontSize: "12px" }}>
+                      <span style={{ fontWeight: "bold", color: "#00FFD4", maxWidth: "360px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontFamily: "'JetBrains Mono', monospace", fontSize: "12px" }}>
                         {job.original_filename}
                       </span>
                       <span style={{ fontSize: "10px", border: "1px solid rgba(0,255,212,0.3)", padding: "0 4px", color: "rgba(0,255,212,0.6)", fontFamily: "'JetBrains Mono', monospace", flexShrink: 0 }}>
