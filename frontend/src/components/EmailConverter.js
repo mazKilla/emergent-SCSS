@@ -400,6 +400,15 @@ function StatusBadge({ status }) {
 
 
 // ── Jobs Table ───────────────────────────────────────────────────────
+const COLUMNS = [
+  { key: "JOB_ID", defaultWidth: 100, minWidth: 60 },
+  { key: "SOURCE_FILE", defaultWidth: 380, minWidth: 120 },
+  { key: "STATUS", defaultWidth: 140, minWidth: 90 },
+  { key: "PROGRESS", defaultWidth: 110, minWidth: 70 },
+  { key: "TIMESTAMP", defaultWidth: 200, minWidth: 120 },
+  { key: "ACTIONS", defaultWidth: 110, minWidth: 80 },
+];
+
 function JobsTable({ onViewJob }) {
   const [jobs, setJobs] = useState([]);
   const [total, setTotal] = useState(0);
@@ -407,9 +416,39 @@ function JobsTable({ onViewJob }) {
   const [loading, setLoading] = useState(true);
   const [fetching, setFetching] = useState(false);
   const [wiping, setWiping] = useState(false);
+  const [colWidths, setColWidths] = useState(() => COLUMNS.map(c => c.defaultWidth));
+  const dragRef = useRef(null);
   const limit = 10;
   const prevStatuses = useRef({});
   const pollRef = useRef(null);
+
+  const onResizeStart = useCallback((colIdx, e) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = colWidths[colIdx];
+    const minW = COLUMNS[colIdx].minWidth;
+
+    const onMove = (ev) => {
+      const delta = ev.clientX - startX;
+      setColWidths(prev => {
+        const next = [...prev];
+        next[colIdx] = Math.max(minW, startW + delta);
+        return next;
+      });
+    };
+    const onUp = () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      dragRef.current = null;
+    };
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+    dragRef.current = colIdx;
+  }, [colWidths]);
 
   const fetchJobs = useCallback(async (silent = false) => {
     if (!silent) setLoading(true); else setFetching(true);
@@ -468,8 +507,8 @@ function JobsTable({ onViewJob }) {
     }
   };
 
-  const thStyle = { padding: "8px 14px", fontFamily: "'JetBrains Mono', monospace", fontSize: "10px", color: "#00FFD4", textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: "normal", borderBottom: "1px solid rgba(0,255,212,0.2)", textAlign: "left", background: "rgba(0,255,212,0.05)" };
-  const tdStyle = { padding: "12px 14px", borderBottom: "1px solid rgba(255,255,255,0.05)", verticalAlign: "middle" };
+  const thBase = { padding: "8px 14px", fontFamily: "'JetBrains Mono', monospace", fontSize: "10px", color: "#00FFD4", textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: "normal", borderBottom: "1px solid rgba(0,255,212,0.2)", textAlign: "left", background: "rgba(0,255,212,0.05)", position: "relative", overflow: "hidden" };
+  const tdStyle = { padding: "12px 14px", borderBottom: "1px solid rgba(255,255,255,0.05)", verticalAlign: "middle", overflow: "hidden" };
 
   return (
     <TWindow title="SYS.DB_RECORDS // jobs_queue">
@@ -515,11 +554,28 @@ function JobsTable({ onViewJob }) {
         </div>
       ) : (
         <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
+          <table style={{ borderCollapse: "collapse", fontSize: "13px", tableLayout: "fixed", width: colWidths.reduce((a, b) => a + b, 0) }}>
+            <colgroup>
+              {colWidths.map((w, i) => <col key={i} style={{ width: w }} />)}
+            </colgroup>
             <thead>
               <tr>
-                {["JOB_ID", "SOURCE_FILE", "STATUS", "PROGRESS", "TIMESTAMP", "ACTIONS"].map((h, i) => (
-                  <th key={h} style={{ ...thStyle, textAlign: i === 5 ? "right" : "left" }}>{h}</th>
+                {COLUMNS.map((col, i) => (
+                  <th key={col.key} style={{ ...thBase, textAlign: i === 5 ? "right" : "left" }}>
+                    {col.key}
+                    {i < COLUMNS.length - 1 && (
+                      <span
+                        onMouseDown={(e) => onResizeStart(i, e)}
+                        style={{
+                          position: "absolute", right: 0, top: 0, bottom: 0, width: "6px",
+                          cursor: "col-resize", background: dragRef.current === i ? "rgba(0,255,212,0.5)" : "transparent",
+                          zIndex: 2,
+                        }}
+                        onMouseEnter={e => e.currentTarget.style.background = "rgba(0,255,212,0.35)"}
+                        onMouseLeave={e => { if (dragRef.current !== i) e.currentTarget.style.background = "transparent"; }}
+                      />
+                    )}
+                  </th>
                 ))}
               </tr>
             </thead>
@@ -535,10 +591,10 @@ function JobsTable({ onViewJob }) {
                       #{(job.id || "").slice(-6).toUpperCase()}
                     </span>
                   </td>
-                  <td style={{ ...tdStyle, minWidth: "280px" }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  <td style={tdStyle}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", overflow: "hidden" }}>
                       {getFileIcon(job.original_filename)}
-                      <span style={{ fontWeight: "bold", color: "#00FFD4", maxWidth: "360px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontFamily: "'JetBrains Mono', monospace", fontSize: "12px" }}>
+                      <span style={{ fontWeight: "bold", color: "#00FFD4", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontFamily: "'JetBrains Mono', monospace", fontSize: "12px" }}>
                         {job.original_filename}
                       </span>
                       <span style={{ fontSize: "10px", border: "1px solid rgba(0,255,212,0.3)", padding: "0 4px", color: "rgba(0,255,212,0.6)", fontFamily: "'JetBrains Mono', monospace", flexShrink: 0 }}>
