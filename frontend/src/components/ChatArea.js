@@ -1,11 +1,16 @@
 import React, { useState, useRef, useEffect } from "react";
-import { Send, Zap } from "lucide-react";
+import { Send, Zap, Paperclip, X, FileText, Loader2 } from "lucide-react";
 import MessageBubble from "./MessageBubble";
+
+const API = process.env.REACT_APP_BACKEND_URL;
+const ATTACH_ACCEPT = ".pdf,.txt,.eml,.mbox,.html,.htm,.msg";
 
 export default function ChatArea({ messages, isLoading, onSendMessage, activeSession, selectedModel }) {
   const [input, setInput] = useState("");
+  const [attachment, setAttachment] = useState(null); // { filename, text, loading, error }
   const messagesEndRef = useRef(null);
-  const textareaRef = useRef(null);
+  const textareaRef    = useRef(null);
+  const attachInputRef = useRef(null);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -13,12 +18,15 @@ export default function ChatArea({ messages, isLoading, onSendMessage, activeSes
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    if (!input.trim() || isLoading) return;
-    onSendMessage(input.trim());
-    setInput("");
-    if (textareaRef.current) {
-      textareaRef.current.style.height = "auto";
+    if ((!input.trim() && !attachment) || isLoading || attachment?.loading) return;
+    let finalMessage = input.trim();
+    if (attachment && attachment.text) {
+      finalMessage = `[ATTACHED FILE: ${attachment.filename}]\n\n${attachment.text}\n\n---\n\n${finalMessage}`;
     }
+    onSendMessage(finalMessage);
+    setInput("");
+    setAttachment(null);
+    if (textareaRef.current) textareaRef.current.style.height = "auto";
   };
 
   const handleKeyDown = (e) => {
@@ -32,6 +40,26 @@ export default function ChatArea({ messages, isLoading, onSendMessage, activeSes
     setInput(e.target.value);
     e.target.style.height = "auto";
     e.target.style.height = Math.min(e.target.scrollHeight, 200) + "px";
+  };
+
+  const handleAttachChange = async (e) => {
+    const file = e.target.files[0];
+    e.target.value = "";
+    if (!file) return;
+    setAttachment({ filename: file.name, text: null, loading: true, error: null });
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch(`${API}/api/extract-text`, { method: "POST", body: fd });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.detail || "Extraction failed");
+      }
+      const data = await res.json();
+      setAttachment({ filename: file.name, text: data.text, loading: false, error: null });
+    } catch (err) {
+      setAttachment({ filename: file.name, text: null, loading: false, error: err.message });
+    }
   };
 
   const QUICK_PROMPTS = [
@@ -78,13 +106,7 @@ export default function ChatArea({ messages, isLoading, onSendMessage, activeSes
         {/* Session indicator */}
         {activeSession && (
           <div className="flex items-center gap-2 mb-2">
-            <span
-              style={{
-                fontFamily: "'JetBrains Mono', monospace",
-                fontSize: "10px",
-                color: "rgba(161,161,170,0.4)",
-              }}
-            >
+            <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: "10px", color: "rgba(161,161,170,0.4)" }}>
               CASE: {activeSession.title || "Untitled"} |{" "}
               <span style={{ color: selectedModel === "grok" ? "rgba(168,85,247,0.7)" : "rgba(0,255,212,0.7)" }}>
                 {selectedModel === "grok" ? "GROK 3" : "CLAUDE SONNET 4.5"}
@@ -93,14 +115,68 @@ export default function ChatArea({ messages, isLoading, onSendMessage, activeSes
           </div>
         )}
 
+        {/* Attachment chip */}
+        {attachment && (
+          <div style={{
+            display: "flex", alignItems: "center", gap: "8px",
+            padding: "6px 10px", marginBottom: "8px",
+            background: attachment.error ? "rgba(239,68,68,0.08)" : attachment.loading ? "rgba(168,85,247,0.08)" : "rgba(0,255,212,0.08)",
+            border: `1px solid ${attachment.error ? "rgba(239,68,68,0.4)" : attachment.loading ? "rgba(168,85,247,0.4)" : "rgba(0,255,212,0.3)"}`,
+          }}>
+            {attachment.loading
+              ? <Loader2 size={13} style={{ color: "#A855F7", animation: "spin 1s linear infinite", flexShrink: 0 }} />
+              : <FileText size={13} style={{ color: attachment.error ? "#EF4444" : "#00FFD4", flexShrink: 0 }} />
+            }
+            <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: "11px", color: attachment.error ? "#EF4444" : "#F8F8F8", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {attachment.loading ? `Extracting ${attachment.filename}...` : attachment.error ? `ERR: ${attachment.error}` : attachment.filename}
+            </span>
+            {!attachment.loading && (
+              <button onClick={() => setAttachment(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#A1A1AA", padding: "0 2px", display: "flex" }}>
+                <X size={13} />
+              </button>
+            )}
+          </div>
+        )}
+
         <form onSubmit={handleSubmit} className="flex items-end gap-3">
+          {/* Hidden file input */}
+          <input
+            ref={attachInputRef}
+            type="file"
+            accept={ATTACH_ACCEPT}
+            style={{ display: "none" }}
+            onChange={handleAttachChange}
+            data-testid="attach-file-input"
+          />
+
+          {/* Attachment button */}
+          <button
+            type="button"
+            data-testid="attach-file-btn"
+            onClick={() => attachInputRef.current?.click()}
+            disabled={isLoading}
+            title="Attach file (PDF, TXT, EML, MBOX, HTML, MSG)"
+            style={{
+              background: attachment && !attachment.error && !attachment.loading ? "rgba(0,255,212,0.12)" : "transparent",
+              border: `1px solid ${attachment && !attachment.error && !attachment.loading ? "rgba(0,255,212,0.5)" : "rgba(255,255,255,0.1)"}`,
+              color: attachment && !attachment.error && !attachment.loading ? "#00FFD4" : "#A1A1AA",
+              padding: "10px",
+              cursor: isLoading ? "not-allowed" : "pointer",
+              flexShrink: 0,
+              opacity: isLoading ? 0.5 : 1,
+              transition: "all 0.2s",
+            }}
+          >
+            <Paperclip size={16} />
+          </button>
+
           <textarea
             ref={textareaRef}
             data-testid="chat-input-textarea"
             value={input}
             onChange={handleTextareaChange}
             onKeyDown={handleKeyDown}
-            placeholder="Describe your situation or ask about Alberta ETW/ALSS policies... (Shift+Enter for new line)"
+            placeholder={attachment?.text ? "Add a message with the attachment... (optional)" : "Describe your situation or ask about Alberta ETW/ALSS policies... (Shift+Enter for new line)"}
             rows={1}
             className="flex-1 px-4 py-3 rounded resize-none text-sm"
             style={{
@@ -119,19 +195,20 @@ export default function ChatArea({ messages, isLoading, onSendMessage, activeSes
           <button
             data-testid="chat-submit-button"
             type="submit"
-            disabled={!input.trim() || isLoading}
+            disabled={(!input.trim() && !attachment?.text) || isLoading || attachment?.loading}
             className="p-3 rounded transition-all"
             style={{
-              background: input.trim() && !isLoading ? "rgba(0,255,212,0.15)" : "rgba(255,255,255,0.05)",
-              border: input.trim() && !isLoading ? "1px solid rgba(0,255,212,0.4)" : "1px solid rgba(255,255,255,0.1)",
-              color: input.trim() && !isLoading ? "#00FFD4" : "#A1A1AA",
-              cursor: input.trim() && !isLoading ? "pointer" : "not-allowed",
+              background: (input.trim() || attachment?.text) && !isLoading && !attachment?.loading ? "rgba(0,255,212,0.15)" : "rgba(255,255,255,0.05)",
+              border: (input.trim() || attachment?.text) && !isLoading && !attachment?.loading ? "1px solid rgba(0,255,212,0.4)" : "1px solid rgba(255,255,255,0.1)",
+              color: (input.trim() || attachment?.text) && !isLoading && !attachment?.loading ? "#00FFD4" : "#A1A1AA",
+              cursor: (input.trim() || attachment?.text) && !isLoading && !attachment?.loading ? "pointer" : "not-allowed",
               flexShrink: 0,
             }}
           >
             <Send size={16} />
           </button>
         </form>
+        <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
         <p
           className="text-center mt-2"
           style={{

@@ -15,8 +15,8 @@ No authentication required — app is open access.
 - Collections: chat_sessions, chat_messages, email_references
 
 ### App URLs
-- Frontend: https://<your-app-id>.preview.emergentagent.com
-- Backend API: https://<your-app-id>.preview.emergentagent.com/api
+- Frontend: https://neon-advocate.preview.emergentagent.com
+- Backend API: https://neon-advocate.preview.emergentagent.com/api
 
 ### How to Obtain Keys
 | Key | Where to Get |
