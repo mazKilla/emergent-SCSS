@@ -57,9 +57,6 @@
 *.mp3       binary
 *.webm      binary
 
-# Linguist overrides
-memory/test_credentials.md linguist-generated
-
 # Diff drivers for readability
 *.json      diff=json
 *.md        diff=markdown
